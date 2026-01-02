@@ -1,0 +1,42 @@
+# Git 目录（可节省几百 MB）
+.git
+.github
+
+# 文档和设计文件
+claudedocs
+README.md
+CLAUDE.md
+CONTRIBUTING.md
+*.md
+
+# 补丁文件（已应用到代码）
+patches
+
+# 开发工具配置
+.vscode
+.idea
+.editorconfig
+.eslintcache
+
+# 日志和临时文件
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs
+
+# 构建产物（会重新构建）
+app/build
+app/kernel*
+app/node_modules/.cache
+
+# 测试文件
+__tests__
+*.test.js
+*.test.ts
+
+# CI/CD 配置（Docker 内不需要）
+.github/workflows
+
+# 其他平台代码（Docker 只需要 Linux）
+android
+ios

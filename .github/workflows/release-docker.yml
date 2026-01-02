@@ -34,22 +34,15 @@ jobs:
           swap-storage: true
 
       - uses: actions/checkout@v4
-        with:
-          path: siyuan-note
 
-      - name: clone origin and apply patches
+      - name: Verify patches exist
         run: |
-          mkdir -p ${{ github.workspace }}/go
-          cd ${{ github.workspace }}/siyuan-note/
-
-          git clone --branch ${{ github.event.inputs.version }} --depth=1 https://github.com/siyuan-note/siyuan.git
-          cd siyuan
-
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/disable-update.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/default-config.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/mock-vip-user.patch
-
-          git status
+          # 验证补丁文件存在（Dockerfile 会在构建时应用）
+          echo "📦 Checking patch files..."
+          ls -lh patches/siyuan/*.patch
+          echo "✅ Patch files found"
+          echo "📦 Version: $(cat app/package.json | grep '"version"' | head -1 | awk -F'"' '{print $4}')"
+          echo "ℹ️  Note: Patches will be applied during Docker build"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -64,7 +57,6 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_PWD }}
 
       - name: Build the Docker image
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan
         run: |
           docker buildx build --push --platform linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v8 -t ${{ env.DOCKER_HUB_USER }}/siyuan-password:latest -t ${{ env.DOCKER_HUB_USER }}/siyuan-password:${{ github.event.inputs.version }} .
         env:

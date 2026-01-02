@@ -66,22 +66,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: siyuan-note
 
-      - name: clone origin and apply patches
+      - name: Apply patches before build
         run: |
           mkdir -p ${{ github.workspace }}/go
-          cd ${{ github.workspace }}/siyuan-note/
 
-          git clone --branch ${{ github.event.inputs.version }} --depth=1 https://github.com/siyuan-note/siyuan.git
-          cd siyuan
+          # 应用核心补丁（必须在构建之前）
+          echo "📦 Applying patches..."
+          git apply --verbose patches/siyuan/default-config.patch
+          git apply --verbose patches/siyuan/disable-update.patch
+          git apply --verbose patches/siyuan/mock-vip-user.patch
+          echo "✅ All patches applied successfully"
 
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/disable-update.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/default-config.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/mock-vip-user.patch
-
-          git status
+          # 验证关键补丁标记
+          if grep -q "// ret := gulu.Ret.NewResult()" kernel/api/system.go; then
+            echo "✅ disable-update.patch 已应用"
+          else
+            echo "⚠️  警告：disable-update.patch 可能未应用"
+          fi
 
       - name: Set up Cross Compilation Toolchains for Linux
         if: contains( matrix.config.goos, 'linux')
@@ -103,21 +105,21 @@ jobs:
           install: p7zip mingw-w64-x86_64-lua
 
       - name: Set up TDM-GCC
-        run: msys2 -c "bash siyuan-note/siyuan/scripts/get-tdm-gcc.sh tdm https://github.com/jmeubank/tdm-gcc/releases/download/v10.3.0-tdm-1/tdm-gcc-10.3.0.exe" && echo "CC=${{ github.workspace }}/tdm/bin/gcc.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        run: msys2 -c "bash scripts/get-tdm-gcc.sh tdm https://github.com/jmeubank/tdm-gcc/releases/download/v10.3.0-tdm-1/tdm-gcc-10.3.0.exe" && echo "CC=${{ github.workspace }}/tdm/bin/gcc.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         if: contains( matrix.config.goarch, '386')
         working-directory: ${{ github.workspace }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ github.workspace }}/siyuan-note/siyuan/kernel/go.mod
+          go-version-file: kernel/go.mod
           cache-dependency-path: "**/*.sum"
       - run: go version
 
       - name: Set up goversioninfo
         run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo && go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo
         if: contains( matrix.config.goos, 'windows')
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/kernel
+        working-directory: kernel
         env:
           GO111MODULE: on
           CGO_ENABLED: 1
@@ -132,20 +134,20 @@ jobs:
 
       - name: Install Node pnpm
         run: npm install -g ${{ github.event.inputs.packageManager }}
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: app
 
       - name: Install Node Dependencies
         run: pnpm install --no-frozen-lockfile
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: app
 
       - name: Building UI
         run: pnpm run build
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: app
 
       - name: Generate Icon Resource and Properties/Version Info For Windows
         run: ${{ github.workspace }}\go\${{ matrix.config.gobin }}\goversioninfo -platform-specific=true -icon="resource\icon.ico" -manifest="resource\goversioninfo.exe.manifest"
         if: contains( matrix.config.goos, 'windows')
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/kernel
+        working-directory: kernel
 
       - name: Clean Build Directories
         if: contains( matrix.config.goos, 'linux')
@@ -153,11 +155,10 @@ jobs:
           rm -rf app/build
           rm -rf app/kernel-linux
           rm -rf app/kernel-linux-arm64
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan
 
       - name: Building Kernel
         run: go build --tags fts5 -o "${{ matrix.config.kernel_path }}" -v -ldflags "${{ matrix.config.build_args }}"
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/kernel
+        working-directory: kernel
         env:
           GO111MODULE: on
           CGO_ENABLED: 1
@@ -169,7 +170,7 @@ jobs:
 
       - name: Building Electron
         run: pnpm run ${{ matrix.config.electron_args }}
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: app
 
       - uses: joutvhu/get-release@v1
         id: get_current_release
@@ -185,5 +186,5 @@ jobs:
         with:
           upload_url: ${{ steps.get_current_release.outputs.upload_url }}
           asset_name: siyuan-password-${{ github.event.inputs.version }}-${{ matrix.config.suffix }}
-          asset_path: ${{ github.workspace }}/siyuan-note/siyuan/app/build/siyuan-*-${{ matrix.config.suffix }}
+          asset_path: app/build/siyuan-*-${{ matrix.config.suffix }}
           asset_content_type: application/octet-stream

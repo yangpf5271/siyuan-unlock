@@ -25,20 +25,21 @@ jobs:
         with:
           path: siyuan-note
 
-      - name: clone origin and apply patches
+      - name: Apply patches and clone iOS repo
         run: |
           mkdir -p ${{ github.workspace }}/go
           cd ${{ github.workspace }}/siyuan-note/
 
-          git clone --branch ${{ github.event.inputs.version }} --depth=1 https://github.com/siyuan-note/siyuan.git
-          cd siyuan
-
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/disable-update.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/default-config.patch
-          git apply ${{ github.workspace }}/siyuan-note/patches/siyuan/mock-vip-user.patch
+          # 应用核心补丁（必须在构建之前）
+          echo "📦 Applying core patches..."
+          git apply --verbose patches/siyuan/default-config.patch
+          git apply --verbose patches/siyuan/disable-update.patch
+          git apply --verbose patches/siyuan/mock-vip-user.patch
+          echo "✅ Core patches applied successfully"
 
           cd ..
 
+          # iOS 需要独立克隆
           git clone --depth=1 https://github.com/siyuan-note/siyuan-ios.git
           cd siyuan-ios
 
@@ -50,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ github.workspace }}/siyuan-note/siyuan/kernel/go.mod
+          go-version-file: ${{ github.workspace }}/siyuan-note/kernel/go.mod
           cache-dependency-path: "**/*.sum"
       - run: go version
 
@@ -61,15 +62,15 @@ jobs:
 
       - name: Install Node pnpm
         run: npm install -g ${{ github.event.inputs.packageManager }}
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: ${{ github.workspace }}/siyuan-note/app
 
       - name: Install Node Dependencies
         run: pnpm install --no-frozen-lockfile
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: ${{ github.workspace }}/siyuan-note/app
 
       - name: Building UI
         run: pnpm run build
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app
+        working-directory: ${{ github.workspace }}/siyuan-note/app
 
       - name: gomobile
         working-directory: ${{ github.workspace }}/go
@@ -80,13 +81,13 @@ jobs:
       - name: Building ios Kernel
         run: |
           gomobile bind --tags fts5 -ldflags '-s -w' -v -target=ios -o "${{ matrix.config.kernel_path }}" ./
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/kernel/mobile
+        working-directory: ${{ github.workspace }}/siyuan-note/kernel/mobile
         env:
           GO111MODULE: on
           CGO_ENABLED: 1
 
       - name: ios assets
-        working-directory: ${{ github.workspace }}/siyuan-note/siyuan/app/
+        working-directory: ${{ github.workspace }}/siyuan-note/app/
         run: |
           mkdir -p ${{ github.workspace }}/siyuan-note/siyuan-ios/app/
           cp -r ./appearance ./guide ./stage ./changelogs ${{ github.workspace }}/siyuan-note/siyuan-ios/app/

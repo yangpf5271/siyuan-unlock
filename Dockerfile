@@ -2,6 +2,14 @@ FROM node:21 AS NODE_BUILD
 
 WORKDIR /go/src/github.com/siyuan-note/siyuan/
 ADD . /go/src/github.com/siyuan-note/siyuan/
+
+# 应用核心补丁（必须在构建之前）
+RUN echo "📦 Applying patches..." && \
+    git apply --verbose patches/siyuan/default-config.patch && \
+    git apply --verbose patches/siyuan/disable-update.patch && \
+    git apply --verbose patches/siyuan/mock-vip-user.patch && \
+    echo "✅ All patches applied successfully"
+
 RUN apt-get update && \
     apt-get install -y jq
 RUN cd app && \
