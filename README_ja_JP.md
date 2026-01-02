@@ -22,12 +22,10 @@
 <a title="Discord" target="_blank" href="https://discord.gg/dmMbCqVX7G"><img alt="Chat on Discord" src="https://img.shields.io/discord/808152298789666826?label=Discord&logo=Discord&style=social"></a>
 <br><br>
 <a href="https://trendshift.io/repositories/3949" target="_blank"><img src="https://trendshift.io/api/badge/repositories/3949" alt="siyuan-note%2Fsiyuan | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-<br><br>
-<a href="https://www.producthunt.com/products/siyuan/reviews?utm_source=badge-product_rating&utm_medium=badge&utm_souce=badge-siyuan" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/product_rating.svg?product_id=534576&theme=light" alt="SiYuan - A&#0032;privacy&#0045;first&#0032;personal&#0032;knowledge&#0032;management&#0032;software | Product Hunt" style="width: 242px; height: 108px;" width="242" height="108" /></a>
 </p>
 
 <p align="center">
-<a href="README.md">English</a> | <a href="README_zh_CN.md">中文</a>
+<a href="README.md">English</a> | <a href="README_zh_CN.md">中文</a> | <a href="README_tr_TR.md">Türkçe</a>
 </p>
 
 ---
@@ -42,8 +40,10 @@
 * [🚀 ダウンロードとセットアップ](#-ダウンロードとセットアップ)
   * [アプリマーケット](#アプリマーケット)
   * [インストールパッケージ](#インストールパッケージ)
+  * [パッケージマネージャー](#パッケージマネージャー)
   * [Docker ホスティング](#docker-ホスティング)
   * [Unraid ホスティング](#unraid-ホスティング)
+  * [TrueNas ホスティング](#truenas-ホスティング)
   * [インサイダープレビュー](#インサイダープレビュー)
 * [🏘️ コミュニティ](#️-コミュニティ)
 * [🛠️ 開発ガイド](#️-開発ガイド)
@@ -66,9 +66,9 @@ SiYuanは、プライバシーを最優先とする個人の知識管理シス�
 
 詳細については、[SiYuan英語ディスカッションフォーラム](https://liuyun.io)をご覧ください。
 
-![feature0.png](https://b3logfile.com/file/2024/01/feature0-1orBRlI.png)
+![feature0.png](https://b3logfile.com/file/2025/11/feature0-GfbhEqf.png)
 
-![feature51.png](https://b3logfile.com/file/2024/02/feature5-1-uYYjAqy.png)
+![feature51.png](https://b3logfile.com/file/2025/11/feature5-1-7DJSfEP.png)
 
 ## 🔮 特徴
 
@@ -160,6 +160,16 @@ SiYuanは、プライバシーを最優先とする個人の知識管理シス�
 * [B3log](https://b3log.org/siyuan/en/download.html)
 * [GitHub](https://github.com/siyuan-note/siyuan/releases)
 
+### パッケージマネージャー
+
+#### `siyuan`
+
+[![梱包状態](https://repology.org/badge/vertical-allrepos/siyuan.svg)](https://repology.org/project/siyuan/versions)
+
+#### `siyuan-note`
+
+[![梱包状態](https://repology.org/badge/vertical-allrepos/siyuan-note.svg)](https://repology.org/project/siyuan-note/versions)
+
 ### Docker ホスティング
 
 <details>
@@ -206,7 +216,10 @@ docker run -d \
 * `PGID`: カスタムグループID（オプション、指定しない場合はデフォルトで `1000`）
 * `workspace_dir_host`: ホスト上のワークスペースフォルダーのパス
 * `workspace_dir_container`: コンテナ内のワークスペースフォルダーのパス、`--workspace` で指定されたものと同じ
+  * あるいは、`SIYUAN_WORKSPACE_PATH` 環境変数を使用してパスを設定することもできます。両方が設定されている場合は、コマンドラインの値が優先されます
 * `accessAuthCode`: アクセス認証コード（**必ず変更してください**、そうしないと誰でもデータにアクセスできます）
+  * また、`SIYUAN_ACCESS_AUTH_CODE` 環境変数を設定することで認証コードを指定することもできます。両方が設定されている場合、コマンドラインの値が優先されます
+  * 環境変数 `SIYUAN_ACCESS_AUTH_CODE_BYPASS=true` を設定することで、アクセス認証コードを無効にすることができます
 
 簡略化するために、ホストとコンテナでワークスペースフォルダーのパスを一致させることをお勧めします。たとえば、`workspace_dir_host` と `workspace_dir_container` の両方を `/siyuan/workspace` に設定します。対応する起動コマンドは次のようになります：
 
@@ -296,6 +309,42 @@ Host path: /mnt/user/appdata/siyuan
 PUID: 1000
 PGID: 1000
 Publish parameters: --accessAuthCode=******（アクセス認証コード）
+```
+
+</details>
+
+### TrueNas ホスティング
+
+<details>
+<summary>TrueNasデプロイメント</summary>
+
+注意：まず TrueNAS Shell で以下のコマンドを実行してください。`Pool_1/Apps_Data/siyuan` をアプリ用のデータセットパスに合わせて更新してください。
+
+```shell
+zfs create Pool_1/Apps_Data/siyuan
+chown -R 1001:1002 /mnt/Pool_1/Apps_Data/siyuan
+chmod 755 /mnt/Pool_1/Apps_Data/siyuan
+```
+
+Apps - DiscoverApps - More Options（右上、Custom App を除く）- YAML でインストール に移動してください
+
+テンプレート例：
+
+```yaml
+services:
+  siyuan:
+    image: b3log/siyuan
+    container_name: siyuan
+    command: ['--workspace=/siyuan/workspace/', '--accessAuthCode=2222']
+    ports:
+      - 6806:6806
+    volumes:
+      - /mnt/Pool_1/Apps_Data/siyuan:/siyuan/workspace  # Adjust to your dataset path 
+    restart: unless-stopped
+    environment:
+      - TZ=America/Los_Angeles  # Replace with your timezone if needed
+      - PUID=1001
+      - PGID=1002
 ```
 
 </details>

@@ -113,7 +113,15 @@ func getImageOCRText(c *gin.Context) {
 		return
 	}
 
-	path := arg["path"].(string)
+	var path string
+	if nil == arg["path"] {
+		ret.Data = map[string]interface{}{
+			"text": "",
+		}
+		return
+	} else {
+		path = arg["path"].(string)
+	}
 
 	ret.Data = map[string]interface{}{
 		"text": util.GetAssetText(path),
@@ -153,7 +161,14 @@ func ocr(c *gin.Context) {
 
 	path := arg["path"].(string)
 
-	ocrJSON := util.OcrAsset(path)
+	ocrJSON, err := util.OcrAsset(path)
+	if nil != err {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		ret.Data = map[string]interface{}{"closeTimeout": 7000}
+		return
+	}
+
 	ret.Data = map[string]interface{}{
 		"text":    util.GetOcrJsonText(ocrJSON),
 		"ocrJSON": ocrJSON,
@@ -202,6 +217,25 @@ func getDocImageAssets(c *gin.Context) {
 	ret.Data = assets
 }
 
+func getDocAssets(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	id := arg["id"].(string)
+	assets, err := model.DocAssets(id)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	ret.Data = assets
+}
+
 func setFileAnnotation(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
@@ -225,6 +259,7 @@ func setFileAnnotation(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
+
 	model.IncSync()
 }
 
@@ -359,8 +394,8 @@ func uploadCloud(c *gin.Context) {
 		return
 	}
 
-	rootID := arg["id"].(string)
-	count, err := model.UploadAssets2Cloud(rootID)
+	id := arg["id"].(string)
+	count, err := model.UploadAssets2Cloud(id)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -369,6 +404,45 @@ func uploadCloud(c *gin.Context) {
 	}
 
 	util.PushMsg(fmt.Sprintf(model.Conf.Language(41), count), 3000)
+}
+
+func uploadCloudByAssetsPaths(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	if nil == arg["paths"] {
+		ret.Code = -1
+		ret.Msg = "paths is required"
+		return
+	}
+
+	pathsArg := arg["paths"].([]interface{})
+	var assets []string
+	for _, pathArg := range pathsArg {
+		assets = append(assets, pathArg.(string))
+	}
+
+	count, err := model.UploadAssets2CloudByAssetsPaths(assets)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		ret.Data = map[string]interface{}{"closeTimeout": 3000}
+		return
+	}
+
+	ignorePushMsg := false
+	if nil != arg["ignorePushMsg"] {
+		ignorePushMsg = arg["ignorePushMsg"].(bool)
+	}
+
+	if !ignorePushMsg {
+		util.PushMsg(fmt.Sprintf(model.Conf.Language(41), count), 3000)
+	}
 }
 
 func insertLocalAssets(c *gin.Context) {

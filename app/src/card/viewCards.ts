@@ -67,10 +67,14 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
         if (response.data.blocks.length > 0) {
             edit = new Protyle(app, dialog.element.querySelector("#cardPreview") as HTMLElement, {
                 blockId: "",
+                action: [Constants.CB_GET_ALL],
                 render: {
                     gutter: true,
-                    breadcrumbDocName: true
+                    breadcrumbDocName: true,
+                    title: true,
+                    hideTitleOnZoom: true,
                 },
+                typewriterMode: false
             });
             if (window.siyuan.mobile) {
                 window.siyuan.mobile.popEditor = edit;
@@ -115,7 +119,7 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                 return;
             }
             let target = event.target as HTMLElement;
-            while (target && !dialog.element.isSameNode(target)) {
+            while (target && (dialog.element !== target)) {
                 const type = target.getAttribute("data-type");
                 if (type === "close") {
                     dialog.destroy();
@@ -264,7 +268,7 @@ ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
 <span data-position="parentE" data-type="reset" data-id="${item.id}" class="b3-list-item__action ariaLabel" aria-label="${window.siyuan.languages.reset}">
     <svg><use xlink:href="#iconUndo"></use></svg>
 </span>
-<span data-position="parentE" data-type="remove" data-id="${item.id}" class="b3-list-item__action ariaLabel" aria-label="${window.siyuan.languages.removeDeck}">
+<span data-position="parentE" data-type="remove" data-id="${item.id}" class="b3-list-item__action b3-list-item__action--warning ariaLabel" aria-label="${window.siyuan.languages.removeDeck}">
     <svg><use xlink:href="#iconTrashcan"></use></svg>
 </span>
 </div>`;
@@ -273,7 +277,7 @@ ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
             // 块被删除的情况
             listHTML += `<div data-type="card-item" class="b3-list-item${isMobile() ? "" : " b3-list-item--hide-action"}">
 <span class="b3-list-item__text">${item.content}</span>
-<span data-position="parentE" data-type="remove" data-id="${item.id}" class="b3-list-item__action ariaLabel" aria-label="${window.siyuan.languages.removeDeck}">
+<span data-position="parentE" data-type="remove" data-id="${item.id}" class="b3-list-item__action b3-list-item__action--warning ariaLabel" aria-label="${window.siyuan.languages.removeDeck}">
     <svg><use xlink:href="#iconTrashcan"></use></svg>
 </span>
 </div>`;
@@ -309,7 +313,7 @@ const getArticle = (edit: Protyle, id: string) => {
                 updateReadonly: true,
                 data: getResponse,
                 protyle: edit.protyle,
-                action: getResponse.data.rootID === getResponse.data.id ? [Constants.CB_GET_HTML] : [Constants.CB_GET_ALL, Constants.CB_GET_HTML],
+                action: getResponse.data.rootID === getResponse.data.id ? [] : [Constants.CB_GET_ALL],
             });
         });
     });

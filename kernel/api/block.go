@@ -28,8 +28,28 @@ import (
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
+
+func checkBlockRef(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	idsArg := arg["ids"].([]interface{})
+	var ids []string
+	for _, id := range idsArg {
+		ids = append(ids, id.(string))
+	}
+	ids = gulu.Str.RemoveDuplicatedElem(ids)
+
+	ret.Data = model.CheckBlockRef(ids)
+}
 
 func getBlockTreeInfos(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
@@ -64,6 +84,31 @@ func getBlockSiblingID(c *gin.Context) {
 		"parent":   parent,
 		"next":     next,
 		"previous": previous,
+	}
+}
+
+func getBlockRelevantIDs(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	id := arg["id"].(string)
+	parentID, previousID, nextID, err := model.GetBlockRelevantIDs(id)
+	if nil != err {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		ret.Data = map[string]interface{}{"closeTimeout": 7000}
+		return
+	}
+
+	ret.Data = map[string]string{
+		"parentID":   parentID,
+		"previousID": previousID,
+		"nextID":     nextID,
 	}
 }
 
@@ -145,6 +190,20 @@ func getHeadingChildrenIDs(c *gin.Context) {
 	ret.Data = ids
 }
 
+func appendHeadingChildren(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	id := arg["id"].(string)
+	childrenDOM := arg["childrenDOM"].(string)
+	model.AppendHeadingChildren(id, childrenDOM)
+}
+
 func getHeadingChildrenDOM(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
@@ -155,7 +214,11 @@ func getHeadingChildrenDOM(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	dom := model.GetHeadingChildrenDOM(id)
+	removeFoldAttr := true
+	if nil != arg["removeFoldAttr"] {
+		removeFoldAttr = arg["removeFoldAttr"].(bool)
+	}
+	dom := model.GetHeadingChildrenDOM(id, removeFoldAttr)
 	ret.Data = dom
 }
 
@@ -171,6 +234,28 @@ func getHeadingDeleteTransaction(c *gin.Context) {
 	id := arg["id"].(string)
 
 	transaction, err := model.GetHeadingDeleteTransaction(id)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		ret.Data = map[string]interface{}{"closeTimeout": 7000}
+		return
+	}
+
+	ret.Data = transaction
+}
+
+func getHeadingInsertTransaction(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	id := arg["id"].(string)
+
+	transaction, err := model.GetHeadingInsertTransaction(id)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -438,11 +523,10 @@ func getRefIDs(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	refIDs, refTexts, defIDs := model.GetBlockRefs(id, true)
-	ret.Data = map[string][]string{
-		"refIDs":   refIDs,
-		"refTexts": refTexts,
-		"defIDs":   defIDs,
+	refDefs, originalRefBlockIDs := model.GetBlockRefs(id)
+	ret.Data = map[string]any{
+		"refDefs":             refDefs,
+		"originalRefBlockIDs": originalRefBlockIDs,
 	}
 }
 
@@ -456,10 +540,17 @@ func getRefIDsByFileAnnotationID(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	refIDs, refTexts := model.GetBlockRefIDsByFileAnnotationID(id)
-	ret.Data = map[string][]string{
-		"refIDs":   refIDs,
-		"refTexts": refTexts,
+	refIDs := model.GetBlockRefIDsByFileAnnotationID(id)
+	var retRefDefs []model.RefDefs
+	for _, blockID := range refIDs {
+		retRefDefs = append(retRefDefs, model.RefDefs{RefID: blockID, DefIDs: []string{}})
+	}
+	if 1 > len(retRefDefs) {
+		retRefDefs = []model.RefDefs{}
+	}
+
+	ret.Data = map[string]any{
+		"refDefs": retRefDefs,
 	}
 }
 
@@ -480,7 +571,17 @@ func getBlockDefIDsByRefText(c *gin.Context) {
 	}
 	excludeIDs = nil // 不限制虚拟引用搜索自己 https://ld246.com/article/1633243424177
 	ids := model.GetBlockDefIDsByRefText(anchor, excludeIDs)
-	ret.Data = ids
+	var retRefDefs []model.RefDefs
+	for _, id := range ids {
+		retRefDefs = append(retRefDefs, model.RefDefs{RefID: id, DefIDs: []string{}})
+	}
+	if 1 > len(retRefDefs) {
+		retRefDefs = []model.RefDefs{}
+	}
+
+	ret.Data = map[string]any{
+		"refDefs": retRefDefs,
+	}
 }
 
 func getBlockBreadcrumb(c *gin.Context) {
@@ -560,6 +661,10 @@ func getBlockInfo(c *gin.Context) {
 		ret.Code = 3
 		ret.Msg = model.Conf.Language(56)
 		return
+	} else if errors.Is(err, treenode.ErrSpecTooNew) {
+		ret.Code = -1
+		ret.Msg = model.Conf.Language(275)
+		return
 	}
 
 	block, _ := model.GetBlock(id, tree)
@@ -591,13 +696,14 @@ func getBlockInfo(c *gin.Context) {
 	}
 	rootTitle := root.IAL["title"]
 	rootTitle = html.UnescapeString(rootTitle)
+	icon := root.IAL["icon"]
 	ret.Data = map[string]string{
 		"box":         block.Box,
 		"path":        block.Path,
 		"rootID":      block.RootID,
 		"rootTitle":   rootTitle,
 		"rootChildID": rootChildID,
-		"rootIcon":    root.IAL["icon"],
+		"rootIcon":    icon,
 	}
 }
 
@@ -616,6 +722,61 @@ func getBlockDOM(c *gin.Context) {
 		"id":  id,
 		"dom": dom,
 	}
+}
+
+func getBlockDOMs(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	idsArg := arg["ids"].([]interface{})
+	var ids []string
+	for _, id := range idsArg {
+		ids = append(ids, id.(string))
+	}
+
+	doms := model.GetBlockDOMs(ids)
+	ret.Data = doms
+}
+
+func getBlockDOMWithEmbed(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	id := arg["id"].(string)
+	dom := model.GetBlockDOMWithEmbed(id)
+	ret.Data = map[string]string{
+		"id":  id,
+		"dom": dom,
+	}
+}
+
+func getBlockDOMsWithEmbed(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	idsArg := arg["ids"].([]interface{})
+	var ids []string
+	for _, id := range idsArg {
+		ids = append(ids, id.(string))
+	}
+
+	doms := model.GetBlockDOMsWithEmbed(ids)
+	ret.Data = doms
 }
 
 func getBlockKramdown(c *gin.Context) {

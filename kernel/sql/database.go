@@ -36,6 +36,7 @@ import (
 
 	"github.com/88250/gulu"
 	"github.com/88250/lute/ast"
+	"github.com/88250/lute/editor"
 	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/mattn/go-sqlite3"
@@ -196,6 +197,10 @@ func initDBTables() {
 	_, err = db.Exec("CREATE TABLE attributes (id, name, value, type, block_id, root_id, box, path)")
 	if err != nil {
 		logging.LogFatalf(logging.ExitCodeReadOnlyDatabase, "create table [attributes] failed: %s", err)
+	}
+	_, err = db.Exec("CREATE INDEX idx_attributes_block_id ON attributes(block_id)")
+	if err != nil {
+		logging.LogFatalf(logging.ExitCodeReadOnlyDatabase, "create index [idx_attributes_block_id] failed: %s", err)
 	}
 	_, err = db.Exec("CREATE INDEX idx_attributes_root_id ON attributes(root_id)")
 	if err != nil {
@@ -662,8 +667,9 @@ func buildSpanFromNode(n *ast.Node, tree *parse.Tree, rootID, boxID, p string) (
 		return
 	case ast.NodeTextMark:
 		typ := treenode.TypeAbbr(n.Type.String()) + " " + n.TextMarkType
-		text := n.Content()
+		text := strings.TrimSuffix(n.Content(), string(gulu.ZWJ))
 		markdown := treenode.ExportNodeStdMd(n, luteEngine)
+		markdown = strings.ReplaceAll(markdown, string(gulu.ZWJ)+"#", "#")
 		parentBlock := treenode.ParentBlock(n)
 		span := &Span{
 			ID:       ast.NewNodeID(),
@@ -741,11 +747,15 @@ func buildSpanFromNode(n *ast.Node, tree *parse.Tree, rootID, boxID, p string) (
 
 		if ast.NodeInlineHTML == n.Type {
 			// 没有行级 HTML，只有块级 HTML，这里转换为块
+			n.ID = ast.NewNodeID()
+			n.SetIALAttr("id", n.ID)
+			n.SetIALAttr("updated", n.ID[:14])
 			b, attrs := buildBlockFromNode(n, tree)
 			b.Type = ast.NodeHTMLBlock.String()
 			blocks = append(blocks, b)
 			attributes = append(attributes, attrs...)
 			walkStatus = ast.WalkContinue
+			logging.LogWarnf("inline HTML [%s] is converted to HTML block ", n.Tokens)
 			return
 		}
 
@@ -841,7 +851,7 @@ func buildBlockFromNode(n *ast.Node, tree *parse.Tree) (block *Block, attributes
 		fcontent = NodeStaticContent(fc, nil, true, false, true)
 
 		parentID = n.Parent.ID
-		if h := heading(n); nil != h { // 如果在标题块下方，则将标题块作为父节点
+		if h := treenode.HeadingParent(n); nil != h { // 如果在标题块下方，则将标题块作为父节点
 			parentID = h.ID
 		}
 		length = utf8.RuneCountInString(fcontent)
@@ -853,11 +863,21 @@ func buildBlockFromNode(n *ast.Node, tree *parse.Tree) (block *Block, attributes
 		content = NodeStaticContent(n, nil, true, indexAssetPath, true)
 
 		parentID = n.Parent.ID
-		if h := heading(n); nil != h {
+		if h := treenode.HeadingParent(n); nil != h {
 			parentID = h.ID
 		}
 		length = utf8.RuneCountInString(content)
 	}
+
+	// 剔除零宽空格 Database index content/markdown values no longer contain zero-width spaces https://github.com/siyuan-note/siyuan/issues/15204
+	fcontent = strings.ReplaceAll(fcontent, editor.Zwsp, "")
+	content = strings.ReplaceAll(content, editor.Zwsp, "")
+	markdown = strings.ReplaceAll(markdown, editor.Zwsp, "")
+
+	// 剔除标签结尾处的零宽连字符 Improve search for emojis in tags https://github.com/siyuan-note/siyuan/issues/15391
+	fcontent = strings.ReplaceAll(fcontent, string(gulu.ZWJ)+"#", "#")
+	content = strings.ReplaceAll(content, string(gulu.ZWJ)+"#", "#")
+	markdown = strings.ReplaceAll(markdown, string(gulu.ZWJ)+"#", "#")
 
 	block = &Block{
 		ID:       n.ID,
@@ -929,32 +949,12 @@ func tagFromNode(node *ast.Node) (ret string) {
 
 		if n.IsTextMarkType("tag") {
 			tagBuilder.WriteString("#")
-			tagBuilder.WriteString(n.Text())
+			tagBuilder.WriteString(n.Content())
 			tagBuilder.WriteString("# ")
 		}
 		return ast.WalkContinue
 	})
 	return strings.TrimSpace(tagBuilder.String())
-}
-
-func heading(node *ast.Node) *ast.Node {
-	if nil == node {
-		return nil
-	}
-
-	currentLevel := 16
-	if ast.NodeHeading == node.Type {
-		currentLevel = node.HeadingLevel
-	}
-
-	for prev := node.Previous; nil != prev; prev = prev.Previous {
-		if ast.NodeHeading == prev.Type {
-			if prev.HeadingLevel < currentLevel {
-				return prev
-			}
-		}
-	}
-	return nil
 }
 
 func deleteByBoxTx(tx *sql.Tx, box string) (err error) {
@@ -1256,17 +1256,18 @@ func batchDeleteByPathPrefix(tx *sql.Tx, boxID, pathPrefix string) (err error) {
 }
 
 func batchUpdatePath(tx *sql.Tx, tree *parse.Tree, context map[string]interface{}) (err error) {
-	stmt := "UPDATE blocks SET box = ?, path = ?, hpath = ? WHERE root_id = ?"
-	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, tree.ID); err != nil {
+	ialContent := treenode.IALStr(tree.Root)
+	stmt := "UPDATE blocks SET box = ?, path = ?, hpath = ?, ial = ? WHERE root_id = ?"
+	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, ialContent, tree.ID); err != nil {
 		return
 	}
-	stmt = "UPDATE blocks_fts SET box = ?, path = ?, hpath = ? WHERE root_id = ?"
-	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, tree.ID); err != nil {
+	stmt = "UPDATE blocks_fts SET box = ?, path = ?, hpath = ?, ial = ? WHERE root_id = ?"
+	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, ialContent, tree.ID); err != nil {
 		return
 	}
 	if !caseSensitive {
-		stmt = "UPDATE blocks_fts_case_insensitive SET box = ?, path = ?, hpath = ? WHERE root_id = ?"
-		if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, tree.ID); err != nil {
+		stmt = "UPDATE blocks_fts_case_insensitive SET box = ?, path = ?, hpath = ?, ial = ? WHERE root_id = ?"
+		if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, ialContent, tree.ID); err != nil {
 			return
 		}
 	}
@@ -1277,17 +1278,18 @@ func batchUpdatePath(tx *sql.Tx, tree *parse.Tree, context map[string]interface{
 }
 
 func batchUpdateHPath(tx *sql.Tx, tree *parse.Tree, context map[string]interface{}) (err error) {
-	stmt := "UPDATE blocks SET hpath = ? WHERE root_id = ?"
-	if err = execStmtTx(tx, stmt, tree.HPath, tree.ID); err != nil {
+	ialContent := treenode.IALStr(tree.Root)
+	stmt := "UPDATE blocks SET hpath = ?, ial = ? WHERE root_id = ?"
+	if err = execStmtTx(tx, stmt, tree.HPath, ialContent, tree.ID); err != nil {
 		return
 	}
-	stmt = "UPDATE blocks_fts SET hpath = ? WHERE root_id = ?"
-	if err = execStmtTx(tx, stmt, tree.HPath, tree.ID); err != nil {
+	stmt = "UPDATE blocks_fts SET hpath = ?, ial = ? WHERE root_id = ?"
+	if err = execStmtTx(tx, stmt, tree.HPath, ialContent, tree.ID); err != nil {
 		return
 	}
 	if !caseSensitive {
-		stmt = "UPDATE blocks_fts_case_insensitive SET hpath = ? WHERE root_id = ?"
-		if err = execStmtTx(tx, stmt, tree.HPath, tree.ID); err != nil {
+		stmt = "UPDATE blocks_fts_case_insensitive SET hpath = ?, ial = ? WHERE root_id = ?"
+		if err = execStmtTx(tx, stmt, tree.HPath, ialContent, tree.ID); err != nil {
 			return
 		}
 	}
@@ -1356,6 +1358,8 @@ func commitTx(tx *sql.Tx) (err error) {
 	if err = tx.Commit(); err != nil {
 		logging.LogErrorf("commit tx failed: %s\n  %s", err, logging.ShortStack())
 	}
+
+	closeTxPreparedStmts(tx)
 	return
 }
 
@@ -1378,6 +1382,8 @@ func commitHistoryTx(tx *sql.Tx) (err error) {
 	if err = tx.Commit(); err != nil {
 		logging.LogErrorf("commit tx failed: %s\n  %s", err, logging.ShortStack())
 	}
+
+	closeTxPreparedStmts(tx)
 	return
 }
 
@@ -1400,16 +1406,80 @@ func commitAssetContentTx(tx *sql.Tx) (err error) {
 	if err = tx.Commit(); err != nil {
 		logging.LogErrorf("commit tx failed: %s\n  %s", err, logging.ShortStack())
 	}
+
+	closeTxPreparedStmts(tx)
 	return
 }
 
-func prepareExecInsertTx(tx *sql.Tx, stmtSQL string, args []interface{}) (err error) {
-	stmt, err := tx.Prepare(stmtSQL)
-	if err != nil {
+func closeTxPreparedStmts(tx *sql.Tx) {
+	if tx == nil {
 		return
 	}
+	cacheKey := txCacheKey(tx)
+
+	txStmtCacheLock.Lock()
+	stmtMap, ok := txStmtCache[cacheKey]
+	if ok {
+		delete(txStmtCache, cacheKey)
+	}
+	txStmtCacheLock.Unlock()
+
+	if !ok {
+		return
+	}
+	for _, stmt := range stmtMap {
+		_ = stmt.Close()
+	}
+}
+
+var (
+	txStmtCache     = make(map[string]map[string]*sql.Stmt)
+	txStmtCacheLock = sync.Mutex{}
+)
+
+func txCacheKey(tx *sql.Tx) string {
+	return fmt.Sprintf("%p", tx)
+}
+
+func prepareExecInsertTx(tx *sql.Tx, stmtSQL string, args []interface{}) (err error) {
+	if tx == nil {
+		return fmt.Errorf("tx is nil")
+	}
+
+	cacheKey := txCacheKey(tx)
+
+	txStmtCacheLock.Lock()
+	stmtMap, ok := txStmtCache[cacheKey]
+	if !ok {
+		stmtMap = make(map[string]*sql.Stmt)
+		txStmtCache[cacheKey] = stmtMap
+	}
+	stmt, ok := stmtMap[stmtSQL]
+	txStmtCacheLock.Unlock()
+
+	if !ok {
+		stmt, err = tx.Prepare(stmtSQL)
+		if err != nil {
+			return
+		}
+		txStmtCacheLock.Lock()
+		if existing, exists := txStmtCache[cacheKey][stmtSQL]; exists {
+			stmt.Close()
+			stmt = existing
+		} else {
+			txStmtCache[cacheKey][stmtSQL] = stmt
+		}
+		txStmtCacheLock.Unlock()
+	}
+
 	if _, err = stmt.Exec(args...); err != nil {
-		logging.LogErrorf("exec database stmt [%s] failed: %s", stmtSQL, err)
+		if strings.Contains(err.Error(), "database disk image is malformed") {
+			tx.Rollback()
+			closeDatabase()
+			removeDatabaseFile()
+			logging.LogFatalf(logging.ExitCodeReadOnlyDatabase, "database disk image [%s] is malformed, please restart SiYuan kernel to rebuild it", util.DBPath)
+		}
+		logging.LogErrorf("exec database stmt [%s] failed: %s\n  %s", stmtSQL, err, logging.ShortStack())
 		return
 	}
 	return
@@ -1431,7 +1501,6 @@ func execStmtTx(tx *sql.Tx, stmt string, args ...interface{}) (err error) {
 
 func nSort(n *ast.Node) int {
 	switch n.Type {
-	// 以下为块级元素
 	case ast.NodeHeading:
 		return 5
 	case ast.NodeParagraph:
@@ -1449,6 +1518,8 @@ func nSort(n *ast.Node) int {
 	case ast.NodeListItem:
 		return 20
 	case ast.NodeBlockquote:
+		return 20
+	case ast.NodeCallout:
 		return 20
 	case ast.NodeSuperBlock:
 		return 30
@@ -1510,6 +1581,17 @@ func SQLTemplateFuncs(templateFuncMap *template.FuncMap) {
 		retBlocks = SelectBlocksRawStmt(stmt, 1, 512)
 		return
 	}
+	(*templateFuncMap)["getBlock"] = func(arg any) (retBlock *Block) {
+		switch v := arg.(type) {
+		case string:
+			retBlock = GetBlock(v)
+		case map[string]interface{}:
+			if id, ok := v["id"]; ok {
+				retBlock = GetBlock(id.(string))
+			}
+		}
+		return
+	}
 	(*templateFuncMap)["querySpans"] = func(stmt string, args ...string) (retSpans []*Span) {
 		for _, arg := range args {
 			stmt = strings.Replace(stmt, "?", arg, 1)
@@ -1521,4 +1603,23 @@ func SQLTemplateFuncs(templateFuncMap *template.FuncMap) {
 		ret, _ = Query(stmt, 1024)
 		return
 	}
+}
+
+func Vacuum() {
+	if nil != db {
+		if _, err := db.Exec("VACUUM"); nil != err {
+			logging.LogErrorf("vacuum database failed: %s", err)
+		}
+	}
+	if nil != historyDB {
+		if _, err := historyDB.Exec("VACUUM"); nil != err {
+			logging.LogErrorf("vacuum history database failed: %s", err)
+		}
+	}
+	if nil != assetContentDB {
+		if _, err := assetContentDB.Exec("VACUUM"); nil != err {
+			logging.LogErrorf("vacuum asset content database failed: %s", err)
+		}
+	}
+	return
 }

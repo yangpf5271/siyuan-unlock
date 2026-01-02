@@ -8,7 +8,7 @@ import {setEditMode} from "../util/setEditMode";
 import {RecordMedia} from "../util/RecordMedia";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {uploadFiles} from "../upload";
-import {hasClosestBlock, hasClosestByAttribute, hasTopClosestByClassName} from "../util/hasClosest";
+import {hasClosestBlock, hasTopClosestByClassName} from "../util/hasClosest";
 import {needSubscribe} from "../../util/needSubscribe";
 import {isMobile} from "../../util/functions";
 import {zoomOut} from "../../menus/protyle";
@@ -32,6 +32,7 @@ import {isInAndroid, isInHarmony, isIPad, isMac, updateHotkeyTip} from "../util/
 import {resize} from "../util/resize";
 import {listIndent, listOutdent} from "../wysiwyg/list";
 import {improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
+import {getCloudURL} from "../../config/util/about";
 
 export class Breadcrumb {
     public element: HTMLElement;
@@ -57,7 +58,7 @@ export class Breadcrumb {
 <span class="protyle-breadcrumb__space"></span>
 <button class="protyle-breadcrumb__icon fn__none ariaLabel" aria-label="${updateHotkeyTip(window.siyuan.config.keymap.editor.general.exitFocus.custom)}" data-type="exit-focus">${window.siyuan.languages.exitFocus}</button>
 ${padHTML}
-<button class="block__icon fn__flex-center ariaLabel${window.siyuan.config.readonly ? " fn__none" : ""}" aria-label="${window.siyuan.languages.lockEdit}" data-type="readonly"><svg><use xlink:href="#iconUnlock"></use></svg></button>
+<button class="block__icon fn__flex-center ariaLabel${window.siyuan.config.readonly ? " fn__none" : ""}" aria-label="${window.siyuan.languages.lockEdit}" data-type="readonly" data-subtype="unlock"><svg><use xlink:href="#iconUnlock"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" data-type="doc" aria-label="${isMac() ? window.siyuan.languages.gutterTip2 : window.siyuan.languages.gutterTip2.replace("⇧", "Shift+")}"><svg><use xlink:href="#iconFile"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" data-type="more" aria-label="${window.siyuan.languages.more}"><svg><use xlink:href="#iconMore"></use></svg></button>
 <button class="block__icon fn__flex-center fn__none ariaLabel" data-type="context" aria-label="${window.siyuan.languages.context}"><svg><use xlink:href="#iconAlignCenter"></use></svg></button>`;
@@ -87,7 +88,8 @@ ${padHTML}
                     event.stopPropagation();
                     break;
                 } else if (type === "doc") {
-                    if (window.siyuan.shiftIsPressed) {
+                    // 不使用 window.siyuan.shiftIsPressed ，否则窗口未激活时按 Shift 点击块标无法打开属性面板 https://github.com/siyuan-note/siyuan/issues/15075
+                    if (event.shiftKey) {
                         fetchPost("/api/block/getDocInfo", {
                             id: protyle.block.rootID
                         }, (response) => {
@@ -95,7 +97,7 @@ ${padHTML}
                         });
                     } else {
                         const targetRect = target.getBoundingClientRect();
-                        openTitleMenu(protyle, {x: targetRect.right, y: targetRect.bottom, isLeft: true});
+                        openTitleMenu(protyle, {x: targetRect.right, y: targetRect.bottom, isLeft: true}, Constants.MENU_FROM_TITLE_BREADCRUMB);
                     }
                     event.stopPropagation();
                     event.preventDefault();
@@ -171,27 +173,11 @@ ${padHTML}
                 target = target.parentElement;
             }
         });
-        /// if !MOBILE
+        /// #if !MOBILE
         element.addEventListener("mouseleave", () => {
             protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--hl").forEach(item => {
                 item.classList.remove("protyle-wysiwyg--hl");
             });
-        });
-        this.element.addEventListener("mouseover", (event) => {
-            if (!protyle.selectElement.classList.contains("fn__none")) {
-                return;
-            }
-            const target = event.target as HTMLElement;
-            const svgElement = hasClosestByAttribute(target, "data-node-id", null);
-            if (svgElement) {
-                protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--hl").forEach(item => {
-                    item.classList.remove("protyle-wysiwyg--hl");
-                });
-                const nodeElement = protyle.wysiwyg.element.querySelector(`[data-node-id="${svgElement.getAttribute("data-node-id")}"]`);
-                if (nodeElement) {
-                    nodeElement.classList.add("protyle-wysiwyg--hl");
-                }
-            }
         });
         this.element.addEventListener("mousewheel", (event: WheelEvent) => {
             this.element.scrollLeft = this.element.scrollLeft + event.deltaY;
@@ -214,7 +200,7 @@ ${padHTML}
     }
 
     private genMobileMenu(protyle: IProtyle) {
-        const menu = new Menu("breadcrumb-mobile-path");
+        const menu = new Menu(Constants.MENU_BREADCRUMB_MOBILE_PATH);
         let blockElement: Element;
         if (getSelection().rangeCount > 0) {
             const range = getSelection().getRangeAt(0);
@@ -226,6 +212,9 @@ ${padHTML}
         }
         if (!blockElement) {
             blockElement = getNoContainerElement(protyle.wysiwyg.element.firstElementChild) || protyle.wysiwyg.element.firstElementChild;
+        }
+        if (!blockElement) {
+            return;
         }
         const id = blockElement.getAttribute("data-node-id");
         fetchPost("/api/block/getBlockBreadcrumb", {id, excludeTypes: []}, (response) => {
@@ -241,7 +230,7 @@ ${padHTML}
                     icon: getIconByType(item.type, item.subType),
                     label: item.name,
                     click() {
-                        zoomOut({protyle, id: item.id, focusId: id});
+                        zoomOut({protyle, id: item.id});
                     }
                 });
             });
@@ -260,7 +249,7 @@ ${padHTML}
 
     public showMenu(protyle: IProtyle, position: IPosition) {
         if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
-            window.siyuan.menus.menu.element.getAttribute("data-name") === "breadcrumbMore") {
+            window.siyuan.menus.menu.element.getAttribute("data-name") === Constants.MENU_BREADCRUMB_MORE) {
             window.siyuan.menus.menu.remove();
             return;
         }
@@ -271,7 +260,7 @@ ${padHTML}
         }
         fetchPost("/api/block/getTreeStat", {id: id || (protyle.block.showAll ? protyle.block.id : protyle.block.rootID)}, (response) => {
             window.siyuan.menus.menu.remove();
-            window.siyuan.menus.menu.element.setAttribute("data-name", "breadcrumbMore");
+            window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_BREADCRUMB_MORE);
             if (!protyle.contentElement.classList.contains("fn__none") && !protyle.disabled) {
                 let uploadHTML = "";
                 uploadHTML = '<input class="b3-form__upload" type="file" multiple="multiple"';
@@ -378,7 +367,7 @@ ${padHTML}
                     click() {
                         if (!needSubscribe()) {
                             confirmDialog("📦 " + window.siyuan.languages.uploadAssets2CDN, window.siyuan.languages.uploadAssets2CDNConfirmTip, () => {
-                                fetchPost("/api/asset/uploadCloud", {id: protyle.block.parentID});
+                                fetchPost("/api/asset/uploadCloud", {id: protyle.block.id});
                             });
                         }
                     }
@@ -389,9 +378,10 @@ ${padHTML}
                         label: window.siyuan.languages.share2Liandi,
                         icon: "iconLiandi",
                         click() {
-                            confirmDialog("🚀 " + window.siyuan.languages.share2Liandi, window.siyuan.languages.share2LiandiConfirmTip, () => {
-                                fetchPost("/api/export/export2Liandi", {id: protyle.block.parentID});
-                            });
+                            confirmDialog("🤩 " + window.siyuan.languages.share2Liandi,
+                                window.siyuan.languages.share2LiandiConfirmTip.replace("${accountServer}", getCloudURL("")), () => {
+                                    fetchPost("/api/export/export2Liandi", {id: protyle.block.parentID});
+                                });
                         }
                     }).element);
                 }
@@ -458,10 +448,14 @@ ${padHTML}
                         setEditMode(protyle, "wysiwyg");
                         protyle.scroll.lastScrollTop = 0;
                         fetchPost("/api/filetree/getDoc", {
-                            id: protyle.block.parentID,
-                            size: window.siyuan.config.editor.dynamicLoadBlocks,
+                            id: protyle.block.id,
+                            size: protyle.block.id === protyle.block.rootID ? window.siyuan.config.editor.dynamicLoadBlocks : Constants.SIZE_GET_MAX,
                         }, getResponse => {
-                            onGet({data: getResponse, protyle});
+                            onGet({
+                                data: getResponse,
+                                protyle,
+                                action: protyle.block.id === protyle.block.rootID ? [Constants.CB_GET_FOCUS, Constants.CB_GET_HTML, Constants.CB_GET_UNUNDO] : [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS, Constants.CB_GET_UNUNDO, Constants.CB_GET_HTML]
+                            });
                         });
                         /// #if !MOBILE
                         saveLayout();
@@ -612,6 +606,10 @@ ${padHTML}
         if (!blockElement) {
             blockElement = getNoContainerElement(protyle.wysiwyg.element.firstElementChild) || protyle.wysiwyg.element.firstElementChild;
         }
+        if (!blockElement) {
+            // 浮窗删除单个块后，面包屑无法获取到 blockElement，直接返回即可
+            return;
+        }
         const id = blockElement.getAttribute("data-node-id");
         if (id === this.id && !update) {
             protyle.breadcrumb.element.querySelectorAll(".protyle-breadcrumb__item--active").forEach(item => {
@@ -645,7 +643,7 @@ ${padHTML}
                 } else {
                     html += `<span class="protyle-breadcrumb__item${isCurrent ? " protyle-breadcrumb__item--active" : ""}" data-node-id="${item.id}"${(response.data.length === 1 || index === 0) ? ' style="max-width:none"' : ""}>
     <svg class="popover__block" data-id="${item.id}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
-    <span class="protyle-breadcrumb__text" title="${item.name}">${item.name}</span>
+    ${item.name ? `<span class="protyle-breadcrumb__text" title="${item.name}">${item.name}</span>` : ""}
 </span>`;
                 }
                 if (index !== response.data.length - 1) {

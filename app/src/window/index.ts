@@ -22,10 +22,13 @@ import {
 import {initMessage} from "../dialog/message";
 import {getAllTabs} from "../layout/getAll";
 import {getLocalStorage} from "../protyle/util/compatibility";
-import {init} from "../window/init";
+import {init} from "./init";
 import {loadPlugins, reloadPlugin} from "../plugin/loader";
 import {hideAllElements} from "../protyle/ui/hideElements";
 import {reloadEmoji} from "../emoji";
+import {updateControlAlt} from "../protyle/util/hotKey";
+import {updateAppearance} from "../config/util/updateAppearance";
+import {renderSnippet} from "../config/util/snippets";
 
 class App {
     public plugins: import("../plugin").Plugin[] = [];
@@ -42,6 +45,7 @@ class App {
             layout: {},
             dialogs: [],
             blockPanels: [],
+            closedTabs: [],
             ctrlIsPressed: false,
             altIsPressed: false,
             ws: new Model({
@@ -54,6 +58,13 @@ class App {
                     });
                     if (data) {
                         switch (data.cmd) {
+                            case "setAppearance":
+                                updateAppearance(data.data);
+                                break;
+                            case "setSnippet":
+                                window.siyuan.config.snippet = data.data;
+                                renderSnippet();
+                                break;
                             case "setDefRefCount":
                                 setDefRefCount(data.data);
                                 break;
@@ -78,6 +89,7 @@ class App {
                                 break;
                             case "setConf":
                                 window.siyuan.config = data.data;
+                                updateControlAlt();
                                 break;
                             case "progress":
                                 progressLoading(data);
@@ -155,6 +167,7 @@ class App {
             addScriptSync(`${Constants.PROTYLE_CDN}/js/lute/lute.min.js?v=${Constants.SIYUAN_VERSION}`, "protyleLuteScript");
             addScript(`${Constants.PROTYLE_CDN}/js/protyle-html.js?v=${Constants.SIYUAN_VERSION}`, "protyleWcHtmlScript");
             window.siyuan.config = response.data.conf;
+            updateControlAlt();
             window.siyuan.isPublish = response.data.isPublish;
             await loadPlugins(this);
             getLocalStorage(() => {

@@ -35,8 +35,22 @@ export const initAbout = () => {
         <input class="b3-text-field fn__block" readonly value="http://${window.siyuan.config.system.networkServe ? window.siyuan.config.localIPs[0] : "127.0.0.1"}:${location.port}">
         <div class="b3-label__text">${window.siyuan.languages.about3.replace("${port}", location.port)}</div>
         <div class="fn__hr"></div>
-        <div class="b3-label__text"><code class="fn__code">${window.siyuan.config.localIPs.filter(ip => !(ip.startsWith("[") && ip.endsWith("]"))).join("</code> <code class='fn__code'>")}</code></div>
-        <div class="b3-label__text"><code class="fn__code">${window.siyuan.config.localIPs.filter(ip => (ip.startsWith("[") && ip.endsWith("]"))).join("</code> <code class='fn__code'>")}</code></div>
+        ${(() => {
+            const ipv4Codes: string[] = [];
+            const ipv6Codes: string[] = [];
+            for (const ip of window.siyuan.config.localIPs) {
+                if (!ip.trim()) {
+                    break;
+                }
+                if (ip.startsWith("[") && ip.endsWith("]")) {
+                    ipv6Codes.push(`<code class="fn__code">${ip}</code>`);
+                } else {
+                    ipv4Codes.push(`<code class="fn__code">${ip}</code>`);
+                }
+            }
+            return `<div class="b3-label__text${ipv4Codes.length ? "" : " fn__none"}">${ipv4Codes.join(" ")}</div>
+                    <div class="b3-label__text${ipv6Codes.length ? "" : " fn__none"}">${ipv6Codes.join(" ")}</div>`;
+        })()}
         <div class="fn__hr"></div>
         <div class="b3-label__text">${window.siyuan.languages.about18}</div>
 </div>
@@ -61,7 +75,7 @@ export const initAbout = () => {
         </button>
         <div class="fn__hr"></div>
         <button class="b3-button b3-button--outline fn__block" id="initKeyByPW">
-            ${window.siyuan.languages.genKeyByPW}
+            <svg><use xlink:href="#iconKey"></use></svg>${window.siyuan.languages.genKeyByPW}
         </button>
     </div>
     <div class="${window.siyuan.config.repo.key ? "" : "fn__none"}">
@@ -89,6 +103,22 @@ export const initAbout = () => {
     <div class="fn__hr"></div>
     <input class="b3-text-field fn__block" style="padding-right: 64px;" id="retentionIndexesDaily" min="1" type="number" class="b3-text-field" value="${window.siyuan.config.repo.retentionIndexesDaily}">
     <div class="b3-label__text">${window.siyuan.languages.dataRepoAutoPurgeRetentionIndexesDaily}</div>
+</div>
+<div class="b3-label">
+    ${window.siyuan.languages.vacuumDataIndex}
+    <div class="fn__hr"></div>
+    <button class="b3-button b3-button--outline fn__block" id="vacuumDataIndex">
+       <svg><use xlink:href="#iconRefresh"></use></svg>${window.siyuan.languages.vacuumDataIndex}
+    </button>
+    <div class="b3-label__text">${window.siyuan.languages.vacuumDataIndexTip}</div>
+</div>
+<div class="b3-label">
+    ${window.siyuan.languages.rebuildDataIndex}
+    <div class="fn__hr"></div>
+    <button class="b3-button b3-button--outline fn__block" id="rebuildDataIndex">
+       <svg><use xlink:href="#iconRefresh"></use></svg>${window.siyuan.languages.rebuildDataIndex}
+    </button>
+    <div class="b3-label__text">${window.siyuan.languages.rebuildDataIndexTip}</div>
 </div>
 <div class="b3-label">
     ${window.siyuan.languages.systemLog}
@@ -178,7 +208,7 @@ export const initAbout = () => {
             const importKeyElement = modelMainElement.querySelector("#importKey");
             modelMainElement.firstElementChild.addEventListener("click", (event) => {
                 let target = event.target as HTMLElement;
-                while (target && !target.isSameNode(modelMainElement)) {
+                while (target && (target !== modelMainElement)) {
                     if (target.id === "authCode") {
                         setAccessAuthCode();
                         event.preventDefault();
@@ -279,6 +309,16 @@ export const initAbout = () => {
                         event.preventDefault();
                         event.stopPropagation();
                         break;
+                    } else if (target.id === "vacuumDataIndex") {
+                        fetchPost("/api/system/vacuumDataIndex", {}, () => {});
+                        event.preventDefault();
+                        event.stopPropagation();
+                        break;
+                    } else if (target.id === "rebuildDataIndex") {
+                        fetchPost("/api/system/rebuildDataIndex", {}, () => {});
+                        event.preventDefault();
+                        event.stopPropagation();
+                        break;
                     } else if (target.id === "exportLog") {
                         fetchPost("/api/system/exportLog", {}, (response) => {
                             openByMobile(response.data.zip);
@@ -318,7 +358,7 @@ export const initAbout = () => {
                                     fetchPost("/api/system/setWorkspaceDir", {
                                         path: openPath
                                     }, () => {
-                                        exitSiYuan();
+                                        exitSiYuan(false);
                                     });
                                 });
                             });
@@ -372,7 +412,7 @@ export const initAbout = () => {
                             fetchPost("/api/system/setWorkspaceDir", {
                                 path: target.getAttribute("data-path")
                             }, () => {
-                                exitSiYuan();
+                                exitSiYuan(false);
                             });
                         });
                         event.preventDefault();

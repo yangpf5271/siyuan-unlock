@@ -79,6 +79,7 @@ func setConfSnippet(c *gin.Context) {
 	model.Conf.Save()
 
 	ret.Data = snippet
+	util.BroadcastByType("main", "setSnippet", 0, "", snippet)
 }
 
 func addVirtualBlockRefExclude(c *gin.Context) {
@@ -309,6 +310,13 @@ func setEditor(c *gin.Context) {
 		editor.KaTexMacros = "{}"
 	}
 
+	if 1 > editor.HistoryRetentionDays {
+		editor.HistoryRetentionDays = 30
+	}
+	if 3650 < editor.HistoryRetentionDays {
+		editor.HistoryRetentionDays = 3650
+	}
+
 	oldVirtualBlockRef := model.Conf.Editor.VirtualBlockRef
 	oldVirtualBlockRefInclude := model.Conf.Editor.VirtualBlockRefInclude
 	oldVirtualBlockRefExclude := model.Conf.Editor.VirtualBlockRefExclude
@@ -318,6 +326,7 @@ func setEditor(c *gin.Context) {
 	model.Conf.Save()
 
 	if oldGenerateHistoryInterval != model.Conf.Editor.GenerateHistoryInterval {
+		model.GenerateFileHistory()
 		model.ChangeHistoryTick(editor.GenerateHistoryInterval)
 	}
 
@@ -399,14 +408,14 @@ func setFiletree(c *gin.Context) {
 		return
 	}
 
-	fileTree.RefCreateSavePath = strings.TrimSpace(fileTree.RefCreateSavePath)
+	fileTree.RefCreateSavePath = util.TrimSpaceInPath(fileTree.RefCreateSavePath)
 	if "" != fileTree.RefCreateSavePath {
 		if !strings.HasSuffix(fileTree.RefCreateSavePath, "/") {
 			fileTree.RefCreateSavePath += "/"
 		}
 	}
 
-	fileTree.DocCreateSavePath = strings.TrimSpace(fileTree.DocCreateSavePath)
+	fileTree.DocCreateSavePath = util.TrimSpaceInPath(fileTree.DocCreateSavePath)
 
 	if 1 > fileTree.MaxOpenTabCount {
 		fileTree.MaxOpenTabCount = 8
@@ -414,10 +423,19 @@ func setFiletree(c *gin.Context) {
 	if 32 < fileTree.MaxOpenTabCount {
 		fileTree.MaxOpenTabCount = 32
 	}
+
+	if conf.MinFileTreeRecentDocsListCount > fileTree.RecentDocsMaxListCount {
+		fileTree.RecentDocsMaxListCount = conf.MinFileTreeRecentDocsListCount
+	}
+	if conf.MaxFileTreeRecentDocsListCount < fileTree.RecentDocsMaxListCount {
+		fileTree.RecentDocsMaxListCount = conf.MaxFileTreeRecentDocsListCount
+	}
+
 	model.Conf.FileTree = fileTree
 	model.Conf.Save()
 
 	util.UseSingleLineSave = model.Conf.FileTree.UseSingleLineSave
+	util.LargeFileWarningSize = model.Conf.FileTree.LargeFileWarningSize
 
 	ret.Data = model.Conf.FileTree
 }
@@ -527,6 +545,7 @@ func setAppearance(c *gin.Context) {
 	}
 
 	model.Conf.Appearance = appearance
+	util.StatusBarCfg = model.Conf.Appearance.StatusBar
 	model.Conf.Lang = appearance.Lang
 	oldLang := util.Lang
 	util.Lang = model.Conf.Lang
@@ -539,6 +558,7 @@ func setAppearance(c *gin.Context) {
 	}
 
 	ret.Data = model.Conf.Appearance
+	util.BroadcastByType("main", "setAppearance", 0, "", model.Conf.Appearance)
 }
 
 func setPublish(c *gin.Context) {
@@ -654,7 +674,12 @@ func setEmoji(c *gin.Context) {
 	argEmoji := arg["emoji"].([]interface{})
 	var emoji []string
 	for _, ae := range argEmoji {
-		emoji = append(emoji, ae.(string))
+		e := ae.(string)
+		if strings.Contains(e, ".") {
+			// XSS through emoji name https://github.com/siyuan-note/siyuan/issues/15034
+			e = util.FilterUploadEmojiFileName(e)
+		}
+		emoji = append(emoji, e)
 	}
 
 	model.Conf.Editor.Emoji = emoji

@@ -23,6 +23,7 @@ import (
 
 	"github.com/88250/gulu"
 	"github.com/88250/lute/ast"
+	"github.com/88250/lute/editor"
 	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/logging"
@@ -117,6 +118,7 @@ func indexNode(tx *sql.Tx, id string) (err error) {
 	}
 
 	content := NodeStaticContent(node, nil, true, indexAssetPath, true)
+	content = strings.ReplaceAll(content, editor.Zwsp, "")
 	stmt := "UPDATE blocks SET content = ? WHERE id = ?"
 	if err = execStmtTx(tx, stmt, content, id); err != nil {
 		tx.Rollback()
@@ -178,6 +180,23 @@ func nodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATi
 			if !lastSpace {
 				buf.WriteByte(' ')
 				lastSpace = true
+			}
+			if ast.NodeCallout == n.Type {
+				buf.WriteString(n.CalloutType + " ")
+				if "" != n.CalloutIcon && 0 == n.CalloutIconType {
+					buf.WriteString(n.CalloutIcon + " ")
+				}
+				if "" != n.CalloutTitle {
+					if titleTree := parse.Inline("", []byte(n.CalloutTitle), luteEngine.ParseOptions); nil != titleTree && nil != titleTree.Root.FirstChild.FirstChild {
+						var inlines []*ast.Node
+						for c := titleTree.Root.FirstChild.FirstChild; nil != c; c = c.Next {
+							inlines = append(inlines, c)
+						}
+						for _, inline := range inlines {
+							buf.WriteString(inline.Content())
+						}
+					}
+				}
 			}
 			return ast.WalkContinue
 		}
@@ -257,7 +276,8 @@ func nodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATi
 				}
 
 				if !strings.HasPrefix(n.TextMarkAHref, "assets/") || includeAssetPath {
-					buf.WriteString(" " + util.UnescapeHTML(n.TextMarkAHref))
+					href := util.UnescapeHTML(n.TextMarkAHref)
+					buf.WriteString(" " + util.UnescapeHTML(href))
 				}
 			}
 		case ast.NodeBackslashContent:
@@ -275,8 +295,51 @@ func nodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATi
 	return buf.String()
 }
 
+func BatchGetBlockAttrsWitTrees(ids []string, trees map[string]*parse.Tree) (ret map[string]map[string]string) {
+	ret = map[string]map[string]string{}
+
+	hitCache := true
+	for _, id := range ids {
+		ial := cache.GetBlockIAL(id)
+		if nil != ial {
+			ret[id] = ial
+			continue
+		}
+		hitCache = false
+		break
+	}
+	if hitCache {
+		return
+	}
+
+	for _, id := range ids {
+		tree := trees[id]
+		if nil == tree {
+			continue
+		}
+
+		ret[id] = getBlockAttrsFromTree(id, tree)
+	}
+	return
+}
+
 func BatchGetBlockAttrs(ids []string) (ret map[string]map[string]string) {
 	ret = map[string]map[string]string{}
+
+	hitCache := true
+	for _, id := range ids {
+		ial := cache.GetBlockIAL(id)
+		if nil != ial {
+			ret[id] = ial
+			continue
+		}
+		hitCache = false
+		break
+	}
+	if hitCache {
+		return
+	}
+
 	trees := filesys.LoadTrees(ids)
 	for _, id := range ids {
 		tree := trees[id]
@@ -307,6 +370,15 @@ func GetBlockAttrs(id string) (ret map[string]string) {
 
 func getBlockAttrsFromTree(id string, tree *parse.Tree) (ret map[string]string) {
 	ret = map[string]string{}
+
+	ial := cache.GetBlockIAL(id)
+	if nil != ial {
+		for k, v := range ial {
+			ret[k] = v
+		}
+		return
+	}
+
 	node := treenode.GetNodeInTree(tree, id)
 	if nil == node {
 		logging.LogWarnf("block [%s] not found", id)

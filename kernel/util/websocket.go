@@ -26,11 +26,34 @@ import (
 )
 
 var (
-	WebSocketServer = melody.New()
+	WebSocketServer *melody.Melody
 
 	// map[string]map[string]*melody.Session{}
 	sessions = sync.Map{} // {appId, {sessionId, session}}
 )
+
+func BroadcastByTypeAndExcludeApp(excludeApp, typ, cmd string, code int, msg string, data interface{}) {
+	sessions.Range(func(key, value interface{}) bool {
+		appSessions := value.(*sync.Map)
+		if key == excludeApp {
+			return true
+		}
+
+		appSessions.Range(func(key, value interface{}) bool {
+			session := value.(*melody.Session)
+			if t, ok := session.Get("type"); ok && typ == t {
+				event := NewResult()
+				event.Cmd = cmd
+				event.Code = code
+				event.Msg = msg
+				event.Data = data
+				session.Write(event.Bytes())
+			}
+			return true
+		})
+		return true
+	})
+}
 
 func BroadcastByTypeAndApp(typ, app, cmd string, code int, msg string, data interface{}) {
 	appSessions, ok := sessions.Load(app)
@@ -163,6 +186,16 @@ func PushMsg(msg string, timeout int) (msgId string) {
 	return
 }
 
+func PushMsgWithApp(app, msg string, timeout int) (msgId string) {
+	msgId = gulu.Rand.String(7)
+	if "" == app {
+		BroadcastByType("main", "msg", 0, msg, map[string]interface{}{"id": msgId, "closeTimeout": timeout})
+		return
+	}
+	BroadcastByTypeAndApp("main", app, "msg", 0, msg, map[string]interface{}{"id": msgId, "closeTimeout": timeout})
+	return
+}
+
 func PushErrMsg(msg string, timeout int) (msgId string) {
 	msgId = gulu.Rand.String(7)
 	BroadcastByType("main", "msg", -1, msg, map[string]interface{}{"id": msgId, "closeTimeout": timeout})
@@ -180,6 +213,10 @@ func PushBackgroundTask(data map[string]interface{}) {
 
 func PushReloadFiletree() {
 	BroadcastByType("filetree", "reloadFiletree", 0, "", nil)
+}
+
+func PushReloadTag() {
+	BroadcastByType("main", "reloadTag", 0, "", nil)
 }
 
 type BlockStatResult struct {
@@ -271,8 +308,12 @@ func PushSetRefDynamicText(rootID, blockID, defBlockID, refText string) {
 	BroadcastByType("main", "setRefDynamicText", 0, "", map[string]interface{}{"rootID": rootID, "blockID": blockID, "defBlockID": defBlockID, "refText": refText})
 }
 
-func PushSetDefRefCount(rootID, blockID string, refIDs []string, refCount, rootRefCount int) {
-	BroadcastByType("main", "setDefRefCount", 0, "", map[string]interface{}{"rootID": rootID, "blockID": blockID, "refCount": refCount, "rootRefCount": rootRefCount, "refIDs": refIDs})
+func PushSetDefRefCount(rootID, blockID string, defIDs []string, refCount, rootRefCount int) {
+	BroadcastByType("main", "setDefRefCount", 0, "", map[string]interface{}{"rootID": rootID, "blockID": blockID, "refCount": refCount, "rootRefCount": rootRefCount, "defIDs": defIDs})
+}
+
+func PushLocalShorthandCount(count int) {
+	BroadcastByType("main", "setLocalShorthandCount", 0, "", map[string]interface{}{"count": count})
 }
 
 func PushProtyleLoading(rootID, msg string) {

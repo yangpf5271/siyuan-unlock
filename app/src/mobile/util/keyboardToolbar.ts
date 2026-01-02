@@ -3,7 +3,7 @@ import {
     hasClosestBlock,
     hasClosestByAttribute,
     hasClosestByClassName,
-    hasClosestByMatchTag
+    hasClosestByTag,
 } from "../../protyle/util/hasClosest";
 import {moveToDown, moveToUp} from "../../protyle/wysiwyg/move";
 import {Constants} from "../../constants";
@@ -12,7 +12,7 @@ import {getCurrentEditor} from "../editor";
 import {fontEvent, getFontNodeElements} from "../../protyle/toolbar/Font";
 import {hideElements} from "../../protyle/ui/hideElements";
 import {softEnter} from "../../protyle/wysiwyg/enter";
-import {isInAndroid} from "../../protyle/util/compatibility";
+import {isInAndroid, isInHarmony} from "../../protyle/util/compatibility";
 
 let renderKeyboardToolbarTimeout: number;
 let showUtil = false;
@@ -37,25 +37,25 @@ export const renderTextMenu = (protyle: IProtyle, toolbarElement: Element) => {
         "var(--b3-font-color9)", "var(--b3-font-color10)", "var(--b3-font-color11)", "var(--b3-font-color12)",
         "var(--b3-font-color13)"].forEach((item, index) => {
         colorHTML += `<button class="keyboard__slash-item" data-type="color">
-    <span class="keyboard__slash-icon" ${item?`style="color:${item}"`:""}>A</span>
-    <span class="keyboard__slash-text">${window.siyuan.languages.colorFont} ${item?index + 1:window.siyuan.languages.default}</span>
+    <span class="keyboard__slash-icon" ${item ? `style="color:${item}"` : ""}>A</span>
+    <span class="keyboard__slash-text">${window.siyuan.languages.colorFont} ${item ? index + 1 : window.siyuan.languages.default}</span>
 </button>`;
     });
     let bgHTML = "";
-    ["","var(--b3-font-background1)", "var(--b3-font-background2)", "var(--b3-font-background3)", "var(--b3-font-background4)",
+    ["", "var(--b3-font-background1)", "var(--b3-font-background2)", "var(--b3-font-background3)", "var(--b3-font-background4)",
         "var(--b3-font-background5)", "var(--b3-font-background6)", "var(--b3-font-background7)", "var(--b3-font-background8)",
         "var(--b3-font-background9)", "var(--b3-font-background10)", "var(--b3-font-background11)", "var(--b3-font-background12)",
         "var(--b3-font-background13)"].forEach((item, index) => {
         bgHTML += `<button class="keyboard__slash-item" data-type="backgroundColor">
-    <span class="keyboard__slash-icon" ${item?`style="background-color:${item}"`:""}>A</span>
-    <span class="keyboard__slash-text">${window.siyuan.languages.colorPrimary} ${item?index + 1:window.siyuan.languages.default}</span>
+    <span class="keyboard__slash-icon" ${item ? `style="background-color:${item}"` : ""}>A</span>
+    <span class="keyboard__slash-text">${window.siyuan.languages.colorPrimary} ${item ? index + 1 : window.siyuan.languages.default}</span>
 </button>`;
     });
 
     const nodeElements = getFontNodeElements(protyle);
     let disableFont = false;
     nodeElements?.find((item: HTMLElement) => {
-        if (item.classList.contains("list") || item.classList.contains("li")) {
+        if (item.classList.contains("li")) {
             disableFont = true;
             return true;
         }
@@ -64,10 +64,10 @@ export const renderTextMenu = (protyle: IProtyle, toolbarElement: Element) => {
     let lastColorHTML = "";
     const lastFonts = window.siyuan.storage[Constants.LOCAL_FONTSTYLES];
     if (lastFonts.length > 0) {
-        lastColorHTML = `<div class="keyboard__slash-title">
+        lastColorHTML = `<div data-id="lastUsed" class="keyboard__slash-title">
     ${window.siyuan.languages.lastUsed}
 </div>
-<div class="keyboard__slash-block">`;
+<div data-id="lastUsedWrap" class="keyboard__slash-block">`;
         lastFonts.forEach((item: string) => {
             const lastFontStatus = item.split(Constants.ZWSP);
             switch (lastFontStatus[0]) {
@@ -137,8 +137,8 @@ export const renderTextMenu = (protyle: IProtyle, toolbarElement: Element) => {
     }
     const utilElement = toolbarElement.querySelector(".keyboard__util") as HTMLElement;
     utilElement.innerHTML = `${lastColorHTML}
-<div class="keyboard__slash-title">${window.siyuan.languages.color}</div>
-<div class="keyboard__slash-block">
+<div data-id="color" class="keyboard__slash-title">${window.siyuan.languages.color}</div>
+<div data-id="colorWrap" class="keyboard__slash-block">
     <button class="keyboard__slash-item" data-type="style1">
         <span class="keyboard__slash-icon">A</span>
         <span class="keyboard__slash-text">${window.siyuan.languages.color} ${window.siyuan.languages.default}</span>
@@ -160,16 +160,16 @@ export const renderTextMenu = (protyle: IProtyle, toolbarElement: Element) => {
         <span class="keyboard__slash-text">${window.siyuan.languages.successStyle}</span>
     </button>
 </div>
-<div class="keyboard__slash-title">${window.siyuan.languages.colorFont}</div>
-<div class="keyboard__slash-block">
+<div data-id="colorFont" class="keyboard__slash-title">${window.siyuan.languages.colorFont}</div>
+<div data-id="colorFontWrap" class="keyboard__slash-block">
     ${colorHTML}
 </div>
-<div class="keyboard__slash-title">${window.siyuan.languages.colorPrimary}</div>
-<div class="keyboard__slash-block">
+<div data-id="colorPrimary" class="keyboard__slash-title">${window.siyuan.languages.colorPrimary}</div>
+<div data-id="colorPrimaryWrap" class="keyboard__slash-block">
     ${bgHTML}
 </div>
-<div class="keyboard__slash-title">${window.siyuan.languages.fontStyle}</div>
-<div class="keyboard__slash-block">
+<div data-id="fontStyle" class="keyboard__slash-title">${window.siyuan.languages.fontStyle}</div>
+<div data-id="fontStyleWrap" class="keyboard__slash-block">
     <button class="keyboard__slash-item" data-type="style2">
         <span class="keyboard__slash-text" style="-webkit-text-stroke: 0.2px var(--b3-theme-on-background);-webkit-text-fill-color : transparent;">${window.siyuan.languages.hollow}</span>
     </button>
@@ -181,8 +181,8 @@ export const renderTextMenu = (protyle: IProtyle, toolbarElement: Element) => {
         <span class="keyboard__slash-text">${window.siyuan.languages.clearFontStyle}</span>
     </button>
 </div>
-<div class="keyboard__slash-title${disableFont ? " fn__none" : ""}">${window.siyuan.languages.fontSize}</div>
-<div class="keyboard__slash-block${disableFont ? " fn__none" : ""}">
+<div data-id="fontSize" class="keyboard__slash-title${disableFont ? " fn__none" : ""}">${window.siyuan.languages.fontSize}</div>
+<div data-id="fontSizeWrap" class="keyboard__slash-block${disableFont ? " fn__none" : ""}">
     <select class="b3-select fn__block" style="width: calc(50% - 8px);margin: 4px 0 8px 0;">
         <option ${fontSize === "12px" ? "selected" : ""} value="12px">12px</option>
         <option ${fontSize === "13px" ? "selected" : ""} value="13px">13px</option>
@@ -246,10 +246,15 @@ const renderSlashMenu = (protyle: IProtyle, toolbarElement: Element) => {
     ${getSlashItem("#### " + Lute.Caret, "iconH4", window.siyuan.languages.heading4, "true")}
     ${getSlashItem("##### " + Lute.Caret, "iconH5", window.siyuan.languages.heading5, "true")}
     ${getSlashItem("###### " + Lute.Caret, "iconH6", window.siyuan.languages.heading6, "true")}
-    ${getSlashItem("* " + Lute.Caret, "iconList", window.siyuan.languages.list, "true")}
+    ${getSlashItem("- " + Lute.Caret, "iconList", window.siyuan.languages.list, "true")}
     ${getSlashItem("1. " + Lute.Caret, "iconOrderedList", window.siyuan.languages["ordered-list"], "true")}
-    ${getSlashItem("* [ ] " + Lute.Caret, "iconCheck", window.siyuan.languages.check, "true")}
+    ${getSlashItem("- [ ] " + Lute.Caret, "iconCheck", window.siyuan.languages.check, "true")}
     ${getSlashItem("> " + Lute.Caret, "iconQuote", window.siyuan.languages.quote, "true")}
+    ${getSlashItem(`> [!NOTE]\n> ${Lute.Caret}`, '<span class="keyboard__slash-icon">✏️</span>', `${window.siyuan.languages.callout} - <span style="color: var(--b3-callout-note)">Note</span>`, "true")}
+    ${getSlashItem(`> [!TIP]\n> ${Lute.Caret}`, '<span class="keyboard__slash-icon">💡</span>', `${window.siyuan.languages.callout} - <span style="color: var(--b3-callout-tip)">Tip</span>`, "true")}
+    ${getSlashItem(`> [!IMPORTANT]\n> ${Lute.Caret}`, '<span class="keyboard__slash-icon">❗</span>', `${window.siyuan.languages.callout} - <span style="color: var(--b3-callout-important)">Important</span>`, "true")}
+    ${getSlashItem(`> [!WARNING]\n> ${Lute.Caret}`, '<span class="keyboard__slash-icon">⚠️</span>', `${window.siyuan.languages.callout} - <span style="color: var(--b3-callout-warning)">Warning</span>`, "true")}
+    ${getSlashItem(`> [!CAUTION]\n> ${Lute.Caret}`, '<span class="keyboard__slash-icon">🚨</span>', `${window.siyuan.languages.callout} - <span style="color: var(--b3-callout-caution)">Caution</span>`, "true")}
     ${getSlashItem("```", "iconCode", window.siyuan.languages.code, "true")}
     ${getSlashItem(`| ${Lute.Caret} |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |`, "iconTable", window.siyuan.languages.table, "true")}
     ${getSlashItem("---", "iconLine", window.siyuan.languages.line, "true")}
@@ -357,6 +362,7 @@ const renderKeyboardToolbar = () => {
         }
 
         const protyle = getCurrentEditor().protyle;
+        protyle.toolbar.range = range;
         if (!dynamicElements[0].classList.contains("fn__none")) {
             if (protyle.undo.undoStack.length === 0) {
                 dynamicElements[0].querySelector('[data-type="undo"]').setAttribute("disabled", "disabled");
@@ -463,6 +469,10 @@ export const hideKeyboardToolbar = () => {
 };
 
 export const activeBlur = () => {
+    if (window.JSAndroid && window.JSAndroid.hideKeyboard) {
+        window.JSAndroid.hideKeyboard();
+    }
+    hideKeyboardToolbar();
     (document.activeElement as HTMLElement).blur();
 };
 
@@ -516,23 +526,40 @@ export const initKeyboardToolbar = () => {
     <button class="keyboard__action" data-type="done"><svg style="width: 36px"><use xlink:href="#iconKeyboardHide"></use></svg></button>
 </div>
 <div class="keyboard__util"></div>`;
-    toolbarElement.addEventListener("click", (event) => {
+    let startY = 0;
+    let startX = 0;
+    let moved = false;
+    toolbarElement.addEventListener("touchstart", e => {
+        startY = e.touches[0].clientY;
+        startX = e.touches[0].clientX;
+        moved = false;
+    });
+    toolbarElement.addEventListener("touchmove", e => {
+        if (Math.abs(e.touches[0].clientY - startY) > 10 || Math.abs(e.touches[0].clientX - startX) > 10) {
+            moved = true;
+        }
+    });
+    toolbarElement.addEventListener(isInAndroid() || isInHarmony() ? "touchend" : "click", (event) => {
+        if (moved) {
+            return;
+        }
         const protyle = getCurrentEditor()?.protyle;
         const target = event.target as HTMLElement;
         const slashBtnElement = hasClosestByClassName(event.target as HTMLElement, "keyboard__slash-item");
         if (slashBtnElement && !slashBtnElement.getAttribute("data-type")) {
             const dataValue = decodeURIComponent(slashBtnElement.getAttribute("data-value"));
-            protyle.hint.fill(dataValue, protyle, false);   // 点击后 range 会改变
-            if (dataValue !== Constants.ZWSP + 3) {
-                event.preventDefault();
-                event.stopPropagation();
+            if (dataValue === Constants.ZWSP + 3) {
+                return;
             }
+            protyle.hint.fill(dataValue, protyle, false);   // 点击后 range 会改变
+            event.preventDefault();
+            event.stopPropagation();
             if (slashBtnElement.getAttribute("data-focus") === "true") {
                 focusByRange(protyle.toolbar.range);
             }
             return;
         }
-        const buttonElement = hasClosestByMatchTag(target, "BUTTON");
+        const buttonElement = hasClosestByTag(target, "BUTTON");
         if (!buttonElement || buttonElement.getAttribute("disabled")) {
             return;
         }
@@ -567,7 +594,6 @@ export const initKeyboardToolbar = () => {
                 focusByRange(range);
             } else {
                 activeBlur();
-                hideKeyboardToolbar();
             }
             return;
         }
@@ -628,6 +654,9 @@ export const initKeyboardToolbar = () => {
                 const oldScrollTop = protyle.contentElement.scrollTop;
                 renderTextMenu(protyle, toolbarElement);
                 showKeyboardToolbarUtil(oldScrollTop);
+                if (window.JSAndroid && window.JSAndroid.hideKeyboard) {
+                    window.JSAndroid.hideKeyboard();
+                }
             }
             return;
         } else if (type === "moveup") {
@@ -653,13 +682,15 @@ export const initKeyboardToolbar = () => {
                 const oldScrollTop = protyle.contentElement.scrollTop;
                 renderSlashMenu(protyle, toolbarElement);
                 showKeyboardToolbarUtil(oldScrollTop);
+                if (window.JSAndroid && window.JSAndroid.hideKeyboard) {
+                    window.JSAndroid.hideKeyboard();
+                }
             }
             return;
         } else if (type === "block") {
             protyle.gutter.renderMenu(protyle, nodeElement);
             window.siyuan.menus.menu.fullscreen();
             activeBlur();
-            hideKeyboardToolbar();
             return;
         } else if (type === "outdent") {
             listOutdent(protyle, [nodeElement.parentElement], range);

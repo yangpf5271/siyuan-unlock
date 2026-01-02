@@ -18,6 +18,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"math"
@@ -34,12 +35,12 @@ import (
 	"github.com/88250/lute/ast"
 	"github.com/88250/lute/parse"
 	"github.com/88250/lute/render"
+	"github.com/siyuan-note/dataparser"
 	"github.com/siyuan-note/eventbus"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/conf"
-	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"github.com/siyuan-note/siyuan/kernel/search"
 	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/task"
@@ -53,11 +54,11 @@ func AutoGenerateFileHistory() {
 	ChangeHistoryTick(Conf.Editor.GenerateHistoryInterval)
 	for {
 		<-historyTicker.C
-		task.AppendTask(task.HistoryGenerateFile, generateFileHistory)
+		task.AppendTask(task.HistoryGenerateFile, GenerateFileHistory)
 	}
 }
 
-func generateFileHistory() {
+func GenerateFileHistory() {
 	defer logging.Recover()
 
 	if 1 > Conf.Editor.GenerateHistoryInterval {
@@ -148,6 +149,13 @@ func ClearWorkspaceHistory() (err error) {
 }
 
 func GetDocHistoryContent(historyPath, keyword string, highlight bool) (id, rootID, content string, isLargeDoc bool, err error) {
+	if !util.IsAbsPathInWorkspace(historyPath) {
+		msg := "Path [" + historyPath + "] is not in workspace"
+		logging.LogErrorf(msg)
+		err = errors.New(msg)
+		return
+	}
+
 	if !gulu.File.IsExist(historyPath) {
 		logging.LogWarnf("doc history [%s] not exist", historyPath)
 		return
@@ -161,10 +169,9 @@ func GetDocHistoryContent(historyPath, keyword string, highlight bool) (id, root
 	isLargeDoc = 1024*1024*1 <= len(data)
 
 	luteEngine := NewLute()
-	historyTree, err := filesys.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
+	historyTree, err := dataparser.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
 	if err != nil {
-		logging.LogErrorf("parse tree from file [%s] failed, remove it", historyPath)
-		os.RemoveAll(historyPath)
+		logging.LogErrorf("parse tree from file [%s] failed: %s", historyPath, err)
 		return
 	}
 	id = historyTree.Root.ID
@@ -212,10 +219,10 @@ func GetDocHistoryContent(historyPath, keyword string, highlight bool) (id, root
 	luteEngine.RenderOptions.ProtyleContenteditable = false
 	if isLargeDoc {
 		util.PushMsg(Conf.Language(36), 5000)
-		formatRenderer := render.NewFormatRenderer(historyTree, luteEngine.RenderOptions)
+		formatRenderer := render.NewFormatRenderer(historyTree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 		content = gulu.Str.FromBytes(formatRenderer.Render())
 	} else {
-		content = luteEngine.Tree2BlockDOM(historyTree, luteEngine.RenderOptions)
+		content = luteEngine.Tree2BlockDOM(historyTree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	}
 	return
 }
@@ -230,20 +237,16 @@ func RollbackDocHistory(boxID, historyPath string) (err error) {
 
 	srcPath := historyPath
 	var destPath, parentHPath string
-	id := util.GetTreeID(historyPath)
-	workingDoc := treenode.GetBlockTree(id)
-	if nil != workingDoc {
+	rootID := util.GetTreeID(historyPath)
+	workingDoc := treenode.GetBlockTree(rootID)
+	if nil != workingDoc && "d" == workingDoc.Type {
 		if err = filelock.Remove(filepath.Join(util.DataDir, boxID, workingDoc.Path)); err != nil {
 			return
 		}
 	}
 
-	destPath, parentHPath, err = getRollbackDockPath(boxID, historyPath)
+	destPath, parentHPath, err = getRollbackDockPath(boxID, historyPath, workingDoc)
 	if err != nil {
-		return
-	}
-
-	if err = filelock.CopyNewtimes(srcPath, destPath); err != nil {
 		return
 	}
 
@@ -256,7 +259,6 @@ func RollbackDocHistory(boxID, historyPath string) (err error) {
 		}
 		historyDir = filepath.Join(util.HistoryDir, historyDir)
 
-		// 恢复包含的的属性视图 https://github.com/siyuan-note/siyuan/issues/9567
 		avNodes := tree.Root.ChildrenByType(ast.NodeAttributeView)
 		for _, avNode := range avNodes {
 			srcAvPath := filepath.Join(historyDir, "storage", "av", avNode.AttributeViewID+".json")
@@ -276,14 +278,47 @@ func RollbackDocHistory(boxID, historyPath string) (err error) {
 	tree.Path = filepath.ToSlash(strings.TrimPrefix(destPath, util.DataDir+string(os.PathSeparator)+boxID))
 	tree.HPath = parentHPath + "/" + tree.Root.IALAttr("title")
 
+	// 重置重复的块 ID https://github.com/siyuan-note/siyuan/issues/14358
+	if nil != workingDoc {
+		treenode.RemoveBlockTreesByRootID(rootID)
+	}
+	nodes := map[string]*ast.Node{}
+	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if !entering || !n.IsBlock() {
+			return ast.WalkContinue
+		}
+
+		nodes[n.ID] = n
+		return ast.WalkContinue
+	})
+	var ids []string
+	for nodeID, _ := range nodes {
+		ids = append(ids, nodeID)
+	}
+	idMap := treenode.ExistBlockTrees(ids)
+	var duplicatedIDs []string
+	for nodeID, exist := range idMap {
+		if exist {
+			duplicatedIDs = append(duplicatedIDs, nodeID)
+		}
+	}
+	for _, nodeID := range duplicatedIDs {
+		node := nodes[nodeID]
+		treenode.ResetNodeID(node)
+		if ast.NodeDocument == node.Type {
+			tree.ID = node.ID
+			tree.Path = tree.Path[:strings.LastIndex(tree.Path, "/")] + "/" + node.ID + ".sy"
+		}
+	}
+
 	// 仅重新索引该文档，不进行全量索引
 	// Reindex only the current document after rolling back the document https://github.com/siyuan-note/siyuan/issues/12320
-	treenode.RemoveBlockTree(id)
-	treenode.IndexBlockTree(tree)
-	sql.RemoveTreeQueue(id)
-	sql.IndexTreeQueue(tree)
-	util.PushReloadFiletree()
-	util.PushReloadProtyle(id)
+	sql.RemoveTreeQueue(rootID)
+	if writeErr := indexWriteTreeIndexQueue(tree); nil != writeErr {
+		return
+	}
+	ReloadFiletree()
+	ReloadProtyle(rootID)
 	util.PushMsg(Conf.Language(102), 3000)
 
 	IncSync()
@@ -296,12 +331,12 @@ func RollbackDocHistory(boxID, historyPath string) (err error) {
 	go func() {
 		sql.FlushQueue()
 
-		tree, _ = LoadTreeByBlockID(id)
+		tree, _ = LoadTreeByBlockID(rootID)
 		if nil == tree {
 			return
 		}
 
-		refreshProtyle(id)
+		ReloadProtyle(rootID)
 
 		// 刷新页签名
 		refText := getNodeRefText(tree.Root)
@@ -319,22 +354,24 @@ func RollbackDocHistory(boxID, historyPath string) (err error) {
 		refDefIDs := getRefDefIDs(tree.Root)
 		// 推送定义节点引用计数
 		for _, defID := range refDefIDs {
-			defTree, _ := LoadTreeByBlockID(defID)
-			if nil != defTree {
-				defNode := treenode.GetNodeInTree(defTree, defID)
-				if nil != defNode {
-					task.AppendAsyncTaskWithDelay(task.SetDefRefCount, 1*time.Second, refreshRefCount, defTree.ID, defNode.ID)
-				}
-			}
+			task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, defID)
 		}
 	}()
 	return nil
 }
 
-func getRollbackDockPath(boxID, historyPath string) (destPath, parentHPath string, err error) {
+func getRollbackDockPath(boxID, historyPath string, workingDoc *treenode.BlockTree) (destPath, parentHPath string, err error) {
+	var parentID string
 	baseName := filepath.Base(historyPath)
-	parentID := path.Base(filepath.Dir(historyPath))
-	parentWorkingDoc := treenode.GetBlockTree(parentID)
+	var parentWorkingDoc *treenode.BlockTree
+	if nil != workingDoc {
+		parentID = path.Base(path.Dir(workingDoc.Path))
+		parentWorkingDoc = treenode.GetBlockTree(parentID)
+	} else {
+		parentID = filepath.Base(filepath.Dir(historyPath))
+		parentWorkingDoc = treenode.GetBlockTree(parentID)
+	}
+
 	if nil != parentWorkingDoc {
 		// 父路径如果是文档，则恢复到父路径下
 		parentDir := strings.TrimSuffix(parentWorkingDoc.Path, ".sy")
@@ -614,15 +651,7 @@ func (box *Box) generateDocHistory0() {
 			if nil != loadErr {
 				logging.LogErrorf("load tree [%s] failed: %s", file, loadErr)
 			} else {
-				// 关联的属性视图也要复制到历史中 https://github.com/siyuan-note/siyuan/issues/9567
-				avNodes := tree.Root.ChildrenByType(ast.NodeAttributeView)
-				for _, avNode := range avNodes {
-					srcAvPath := filepath.Join(util.DataDir, "storage", "av", avNode.AttributeViewID+".json")
-					destAvPath := filepath.Join(historyDir, "storage", "av", avNode.AttributeViewID+".json")
-					if copyErr := filelock.Copy(srcAvPath, destAvPath); nil != copyErr {
-						logging.LogErrorf("copy av [%s] failed: %s", srcAvPath, copyErr)
-					}
-				}
+				generateAvHistory(tree, historyDir)
 			}
 		}
 	}
@@ -633,7 +662,6 @@ func (box *Box) generateDocHistory0() {
 
 func clearOutdatedHistoryDir(historyDir string) {
 	if !gulu.File.IsExist(historyDir) {
-		logging.LogWarnf("history dir [%s] not exist", historyDir)
 		return
 	}
 
@@ -752,7 +780,20 @@ func generateOpTypeHistory(tree *parse.Tree, opType string) {
 		return
 	}
 
+	generateAvHistory(tree, historyDir)
+
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
+}
+
+func generateAvHistory(tree *parse.Tree, historyDir string) {
+	avNodes := tree.Root.ChildrenByType(ast.NodeAttributeView)
+	for _, avNode := range avNodes {
+		srcAvPath := filepath.Join(util.DataDir, "storage", "av", avNode.AttributeViewID+".json")
+		destAvPath := filepath.Join(historyDir, "storage", "av", avNode.AttributeViewID+".json")
+		if copyErr := filelock.Copy(srcAvPath, destAvPath); nil != copyErr {
+			logging.LogErrorf("copy av [%s] failed: %s", srcAvPath, copyErr)
+		}
+	}
 }
 
 func GetHistoryDir(suffix string) (ret string, err error) {

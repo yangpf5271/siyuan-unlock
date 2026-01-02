@@ -87,6 +87,8 @@ func globalCopyFiles(c *gin.Context) {
 			return
 		}
 	}
+
+	model.IncSync()
 }
 
 func copyFile(c *gin.Context) {
@@ -132,6 +134,8 @@ func copyFile(c *gin.Context) {
 		ret.Data = map[string]interface{}{"closeTimeout": 5000}
 		return
 	}
+
+	model.IncSync()
 }
 
 func getFile(c *gin.Context) {
@@ -305,7 +309,6 @@ func renameFile(c *gin.Context) {
 	if err != nil {
 		ret.Code = http.StatusForbidden
 		ret.Msg = err.Error()
-		c.JSON(http.StatusAccepted, ret)
 		return
 	}
 	if filelock.IsExist(destAbsPath) {
@@ -320,6 +323,8 @@ func renameFile(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
+
+	model.IncSync()
 }
 
 func removeFile(c *gin.Context) {
@@ -357,6 +362,8 @@ func removeFile(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
+
+	model.IncSync()
 }
 
 func putFile(c *gin.Context) {
@@ -370,6 +377,15 @@ func putFile(c *gin.Context) {
 		ret.Code = http.StatusForbidden
 		ret.Msg = err.Error()
 		return
+	}
+
+	fileExists := filelock.IsExist(fileAbsPath)
+	if !fileExists {
+		if !util.IsValidUploadFileName(filepath.Base(fileAbsPath)) { // Improve kernel API `/api/file/putFile` parameter validation https://github.com/siyuan-note/siyuan/issues/14658
+			ret.Code = http.StatusBadRequest
+			ret.Msg = "invalid file path, please check https://github.com/siyuan-note/siyuan/issues/14658 for more details"
+			return
+		}
 	}
 
 	isDirStr := c.PostForm("isDir")
@@ -442,6 +458,8 @@ func putFile(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
+
+	model.IncSync()
 }
 
 func millisecond2Time(t int64) time.Time {

@@ -25,15 +25,16 @@ import (
 	"strings"
 
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
-	"github.com/siyuan-note/siyuan/kernel/sql"
+	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-func InsertLocalAssets(id string, assetPaths []string, isUpload bool) (succMap map[string]interface{}, err error) {
+func InsertLocalAssets(id string, assetAbsPaths []string, isUpload bool) (succMap map[string]interface{}, err error) {
 	succMap = map[string]interface{}{}
 
 	bt := treenode.GetBlockTree(id)
@@ -50,43 +51,62 @@ func InsertLocalAssets(id string, assetPaths []string, isUpload bool) (succMap m
 		}
 	}
 
-	for _, p := range assetPaths {
-		baseName := filepath.Base(p)
+	for _, assetAbsPath := range assetAbsPaths {
+		baseName := filepath.Base(assetAbsPath)
 		fName := baseName
 		fName = util.FilterUploadFileName(fName)
 		ext := filepath.Ext(fName)
 		fName = strings.TrimSuffix(fName, ext)
 		ext = strings.ToLower(ext)
 		fName += ext
-		if gulu.File.IsDir(p) || !isUpload {
-			if !strings.HasPrefix(p, "\\\\") {
-				p = "file://" + p
+		if gulu.File.IsDir(assetAbsPath) || !isUpload {
+			if !strings.HasPrefix(assetAbsPath, "\\\\") {
+				assetAbsPath = "file://" + assetAbsPath
 			}
-			succMap[baseName] = p
+			succMap[baseName] = assetAbsPath
 			continue
 		}
 
-		fi, statErr := os.Stat(p)
+		if util.IsSubPath(assetsDirPath, assetAbsPath) {
+			// 已经位于 assets 目录下的资源文件不处理
+			// Dragging a file from the assets folder into the editor causes the kernel to exit https://github.com/siyuan-note/siyuan/issues/15355
+			succMap[baseName] = "assets/" + fName
+			continue
+		}
+
+		fi, statErr := os.Stat(assetAbsPath)
 		if nil != statErr {
 			err = statErr
 			return
 		}
-		f, openErr := os.Open(p)
+		f, openErr := os.Open(assetAbsPath)
 		if nil != openErr {
 			err = openErr
 			return
 		}
+
 		hash, hashErr := util.GetEtagByHandle(f, fi.Size())
 		if nil != hashErr {
 			f.Close()
 			return
 		}
 
-		if existAsset := sql.QueryAssetByHash(hash); nil != existAsset {
-			// 已经存在同样数据的资源文件的话不重复保存
-			succMap[baseName] = existAsset.Path
+		if 1 > fi.Size() {
+			hash = "random_1_" + gulu.Rand.String(12)
+		}
+
+		existAssetPath := GetAssetPathByHash(hash)
+		if "" != existAssetPath {
+			originalName := util.RemoveID(filepath.Base(existAssetPath))
+			if strings.ToLower(fName) != strings.ToLower(originalName) {
+				hash = "random_2_" + gulu.Rand.String(12)
+			}
+		}
+
+		if "" != existAssetPath && !strings.HasPrefix(hash, "random_") {
+			succMap[baseName] = existAssetPath
 		} else {
-			fName = util.AssetName(fName)
+			fName = util.AssetName(fName, ast.NewNodeID())
 			writePath := filepath.Join(assetsDirPath, fName)
 			if _, err = f.Seek(0, io.SeekStart); err != nil {
 				f.Close()
@@ -97,7 +117,10 @@ func InsertLocalAssets(id string, assetPaths []string, isUpload bool) (succMap m
 				return
 			}
 			f.Close()
-			succMap[baseName] = "assets/" + fName
+
+			p := "assets/" + fName
+			succMap[baseName] = p
+			cache.SetAssetHash(hash, p)
 		}
 	}
 	IncSync()
@@ -156,6 +179,10 @@ func Upload(c *gin.Context) {
 
 	for _, file := range files {
 		baseName := file.Filename
+		_, lastID := util.LastID(baseName)
+		if !ast.IsNodeIDPattern(lastID) {
+			lastID = ""
+		}
 
 		needUnzip2Dir := false
 		if gulu.OS.IsDarwin() {
@@ -185,13 +212,33 @@ func Upload(c *gin.Context) {
 			break
 		}
 
-		if existAsset := sql.QueryAssetByHash(hash); nil != existAsset {
-			// 已经存在同样数据的资源文件的话不重复保存
-			succMap[baseName] = existAsset.Path
+		if 1 > file.Size {
+			hash = "random_1_" + gulu.Rand.String(12)
+		}
+
+		existAssetPath := GetAssetPathByHash(hash)
+		if "" != existAssetPath {
+			originalName := util.RemoveID(filepath.Base(existAssetPath))
+			if strings.ToLower(fName) != strings.ToLower(originalName) {
+				hash = "random_2_" + gulu.Rand.String(12)
+			}
+		}
+
+		if "" != existAssetPath && !strings.HasPrefix(hash, "random_") {
+			succMap[baseName] = existAssetPath
 		} else {
 			if skipIfDuplicated {
-				// https://github.com/siyuan-note/siyuan/issues/10666
-				matches, globErr := filepath.Glob(assetsDirPath + string(os.PathSeparator) + strings.TrimSuffix(fName, ext) + "*")
+				// 复制 PDF 矩形注解时不再重复插入图片 No longer upload image repeatedly when copying PDF rectangle annotation https://github.com/siyuan-note/siyuan/issues/10666
+				pattern := assetsDirPath + string(os.PathSeparator) + strings.TrimSuffix(fName, ext)
+				_, patternLastID := util.LastID(fName)
+				if lastID != "" && lastID != patternLastID {
+					// 文件名太长被截断了，通过之前的 lastID 来匹配 PDF files with too long file names cannot generate annotated images https://github.com/siyuan-note/siyuan/issues/15739
+					pattern = assetsDirPath + string(os.PathSeparator) + "*" + lastID + ext
+				} else {
+					pattern += "*" + ext
+				}
+
+				matches, globErr := filepath.Glob(pattern)
 				if nil != globErr {
 					logging.LogErrorf("glob failed: %s", globErr)
 				} else {
@@ -204,7 +251,10 @@ func Upload(c *gin.Context) {
 				}
 			}
 
-			fName = util.AssetName(fName)
+			if "" == lastID {
+				lastID = ast.NewNodeID()
+			}
+			fName = util.AssetName(fName, lastID)
 			writePath := filepath.Join(assetsDirPath, fName)
 			tmpDir := filepath.Join(util.TempDir, "convert", "zip", gulu.Rand.String(7))
 			if needUnzip2Dir {
@@ -241,7 +291,7 @@ func Upload(c *gin.Context) {
 				fName = strings.TrimSuffix(fName, ext)
 				ext = strings.ToLower(ext)
 				fName += ext
-				fName = util.AssetName(fName)
+				fName = util.AssetName(fName, ast.NewNodeID())
 				tmpDir2 := filepath.Join(util.TempDir, "convert", "zip", gulu.Rand.String(7))
 				if err = gulu.Zip.Unzip(writePath, tmpDir2); err != nil {
 					errFiles = append(errFiles, fName)
@@ -286,7 +336,9 @@ func Upload(c *gin.Context) {
 				os.RemoveAll(tmpDir2)
 			}
 
-			succMap[baseName] = strings.TrimPrefix(path.Join(relAssetsDirPath, fName), "/")
+			p := strings.TrimPrefix(path.Join(relAssetsDirPath, fName), "/")
+			succMap[baseName] = p
+			cache.SetAssetHash(hash, p)
 		}
 	}
 

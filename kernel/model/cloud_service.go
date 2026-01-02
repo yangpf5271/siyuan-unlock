@@ -215,7 +215,6 @@ var (
 )
 
 func RefreshCheckJob() {
-	go util.GetRhyResult(true) // 发一次请求进行结果缓存
 	go refreshSubscriptionExpirationRemind()
 	go refreshUser()
 	go refreshAnnouncement()
@@ -297,7 +296,7 @@ func refreshAnnouncement() {
 		}
 	}
 
-	for _, announcement := range GetAnnouncements() {
+	for _, announcement := range getAnnouncements() {
 		var exist bool
 		for _, existingAnnouncement := range existingAnnouncements {
 			if announcement.Id == existingAnnouncement.Id {
@@ -331,23 +330,27 @@ func refreshAnnouncement() {
 func RefreshUser(token string) {
 	threeDaysAfter := util.CurrentTimeMillis() + 1000*60*60*24*3
 	if "" == token {
-		if "" != Conf.UserData {
-			Conf.SetUser(loadUserFromConf())
+		user := Conf.GetUser()
+		if nil == user && "" != Conf.UserData {
+			user = loadUserFromConf()
+			if nil != user {
+				Conf.SetUser(user)
+			}
 		}
-		if nil == Conf.GetUser() {
+		if nil == user {
 			return
 		}
 
 		var tokenExpireTime int64
-		tokenExpireTime, err := strconv.ParseInt(Conf.GetUser().UserTokenExpireTime+"000", 10, 64)
+		tokenExpireTime, err := strconv.ParseInt(user.UserTokenExpireTime+"000", 10, 64)
 		if err != nil {
-			logging.LogErrorf("convert token expire time [%s] failed: %s", Conf.GetUser().UserTokenExpireTime, err)
+			logging.LogErrorf("convert token expire time [%s] failed: %s", user.UserTokenExpireTime, err)
 			util.PushErrMsg(Conf.Language(19), 5000)
 			return
 		}
 
 		if threeDaysAfter > tokenExpireTime {
-			token = Conf.GetUser().UserToken
+			token = user.UserToken
 			goto Net
 		}
 		return
@@ -468,7 +471,8 @@ func GetCloudShorthand(id string) (ret map[string]interface{}, err error) {
 	luteEngine := NewLute()
 	luteEngine.SetFootnotes(true)
 	tree := parse.Parse("", []byte(md), luteEngine.ParseOptions)
-	content := luteEngine.ProtylePreview(tree, luteEngine.RenderOptions)
+	luteEngine.RenderOptions.ProtyleMarkNetImg = false
+	content := luteEngine.ProtylePreview(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	ret["shorthandContent"] = content
 	return
 }
@@ -521,7 +525,8 @@ func GetCloudShorthands(page int) (result map[string]interface{}, err error) {
 		md := shorthand["shorthandContent"].(string)
 		shorthand["shorthandMd"] = md
 		tree := parse.Parse("", []byte(md), luteEngine.ParseOptions)
-		content := luteEngine.ProtylePreview(tree, luteEngine.RenderOptions)
+		luteEngine.RenderOptions.ProtyleMarkNetImg = false
+		content := luteEngine.ProtylePreview(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 		shorthand["shorthandContent"] = content
 	}
 	return

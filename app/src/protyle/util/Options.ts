@@ -11,6 +11,8 @@ export class Options {
         render: {
             background: false,
             title: false,
+            titleShowTop: false,
+            hideTitleOnZoom: false,
             gutter: true,
             scroll: false,
             breadcrumb: true,
@@ -20,6 +22,9 @@ export class Options {
         after: undefined,
         classes: {
             preview: "",
+        },
+        click: {
+            preventInsetEmptyBlock: false
         },
         hint: {
             delay: 200,
@@ -88,7 +93,7 @@ export class Options {
         toolbar: Constants.PROTYLE_TOOLBAR,
         typewriterMode: false,
         upload: {
-            max: 1024 * 1024 * 1024 * 4,
+            max: 1024 * 1024 * 1024 * 8,
             url: Constants.UPLOAD_ADDRESS,
             extraData: {},
             fieldName: "file[]",

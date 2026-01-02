@@ -28,10 +28,13 @@ import (
 	"sync"
 
 	"github.com/88250/lute"
+	"github.com/88250/lute/ast"
+	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/88250/lute/render"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/panjf2000/ants/v2"
+	"github.com/siyuan-note/dataparser"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/cache"
@@ -41,6 +44,10 @@ import (
 
 func LoadTrees(ids []string) (ret map[string]*parse.Tree) {
 	ret = map[string]*parse.Tree{}
+	if 1 > len(ids) {
+		return ret
+	}
+
 	bts := treenode.GetBlockTrees(ids)
 	luteEngine := util.NewLute()
 	var boxIDs []string
@@ -69,18 +76,6 @@ func LoadTrees(ids []string) (ret map[string]*parse.Tree) {
 			ret[bID] = tree
 		}
 	}
-	return
-}
-
-func LoadTree(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
-	filePath := filepath.Join(util.DataDir, boxID, p)
-	data, err := filelock.ReadFile(filePath)
-	if err != nil {
-		logging.LogErrorf("load tree [%s] failed: %s", p, err)
-		return
-	}
-
-	ret, err = LoadTreeByData(data, boxID, p, luteEngine)
 	return
 }
 
@@ -119,11 +114,22 @@ func batchLoadTrees(boxIDs, paths []string, luteEngine *lute.Lute) (ret []*parse
 	return
 }
 
+func LoadTree(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
+	filePath := filepath.Join(util.DataDir, boxID, p)
+	data, err := filelock.ReadFile(filePath)
+	if err != nil {
+		logging.LogErrorf("load tree [%s] failed: %s", p, err)
+		return
+	}
+
+	ret, err = LoadTreeByData(data, boxID, p, luteEngine)
+	return
+}
+
 func LoadTreeByData(data []byte, boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
-	ret = parseJSON2Tree(boxID, p, data, luteEngine)
-	if nil == ret {
-		logging.LogErrorf("parse tree [%s] failed", p)
-		err = errors.New("parse tree failed")
+	ret, err = parseJSON2Tree(boxID, p, data, luteEngine)
+	if nil != err {
+		logging.LogErrorf("parse tree [%s] failed: %s", p, err)
 		return
 	}
 	ret.Path = p
@@ -201,6 +207,12 @@ func DocIAL(absPath string) (ret map[string]string) {
 	return
 }
 
+func TreeSize(tree *parse.Tree) (size uint64) {
+	luteEngine := util.NewLute() // 不关注用户的自定义解析渲染选项
+	renderer := render.NewJSONRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
+	return uint64(len(renderer.Render()))
+}
+
 func WriteTree(tree *parse.Tree) (size uint64, err error) {
 	data, filePath, err := prepareWriteTree(tree)
 	if err != nil {
@@ -213,6 +225,11 @@ func WriteTree(tree *parse.Tree) (size uint64, err error) {
 		logging.LogErrorf(msg)
 		err = errors.New(msg)
 		return
+	}
+
+	if util.ExceedLargeFileWarningSize(len(data)) {
+		msg := fmt.Sprintf(util.Langs[util.Lang][268], tree.Root.IALAttr("title")+" "+filepath.Base(filePath), util.LargeFileWarningSize)
+		util.PushErrMsg(msg, 7000)
 	}
 
 	afterWriteTree(tree)
@@ -229,20 +246,19 @@ func prepareWriteTree(tree *parse.Tree) (data []byte, filePath string, err error
 		treenode.UpsertBlockTree(tree)
 	}
 
+	treenode.UpgradeSpec(tree)
+
 	filePath = filepath.Join(util.DataDir, tree.Box, tree.Path)
-	if oldSpec := tree.Root.Spec; "" == oldSpec {
-		parse.NestedInlines2FlattedSpans(tree, false)
-		tree.Root.Spec = "1"
-		logging.LogInfof("migrated tree [%s] from spec [%s] to [%s]", filePath, oldSpec, tree.Root.Spec)
-	}
 	tree.Root.SetIALAttr("type", "doc")
-	renderer := render.NewJSONRenderer(tree, luteEngine.RenderOptions)
+	renderer := render.NewJSONRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	data = renderer.Render()
+	data = bytes.ReplaceAll(data, []byte("\u0000"), []byte(""))
 
 	if !util.UseSingleLineSave {
 		buf := bytes.Buffer{}
 		buf.Grow(1024 * 1024 * 2)
 		if err = json.Indent(&buf, data, "", "\t"); err != nil {
+			logging.LogErrorf("json indent failed: %s", err)
 			return
 		}
 		data = buf.Bytes()
@@ -259,10 +275,9 @@ func afterWriteTree(tree *parse.Tree) {
 	cache.PutDocIAL(tree.Path, docIAL)
 }
 
-func parseJSON2Tree(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (ret *parse.Tree) {
-	var err error
+func parseJSON2Tree(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
 	var needFix bool
-	ret, needFix, err = ParseJSON(jsonData, luteEngine.ParseOptions)
+	ret, needFix, err = dataparser.ParseJSON(jsonData, luteEngine.ParseOptions)
 	if err != nil {
 		logging.LogErrorf("parse json [%s] to tree failed: %s", boxID+p, err)
 		return
@@ -271,15 +286,30 @@ func parseJSON2Tree(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (re
 	ret.Box = boxID
 	ret.Path = p
 
-	filePath := filepath.Join(util.DataDir, ret.Box, ret.Path)
-	if oldSpec := ret.Root.Spec; "" == oldSpec {
-		parse.NestedInlines2FlattedSpans(ret, false)
-		ret.Root.Spec = "1"
-		needFix = true
-		logging.LogInfof("migrated tree [%s] from spec [%s] to [%s]", filePath, oldSpec, ret.Root.Spec)
+	if err = treenode.CheckSpec(ret); errors.Is(err, treenode.ErrSpecTooNew) {
+		return
 	}
+
+	if treenode.UpgradeSpec(ret) {
+		needFix = true
+	}
+
+	if escapeAttributeValues(ret) { // TODO 计划于 2026 年 6 月 30 日后删除
+		// v3.5.1 https://github.com/siyuan-note/siyuan/pull/16657 引入的问题，属性值未转义
+		// v3.5.2 https://github.com/siyuan-note/siyuan/issues/16686 进行了修复，并加了订正逻辑 https://github.com/siyuan-note/siyuan/pull/16712
+		needFix = true
+	}
+
+	if pathID := util.GetTreeID(p); pathID != ret.Root.ID {
+		needFix = true
+		logging.LogInfof("reset tree id from [%s] to [%s]", ret.Root.ID, pathID)
+		ret.Root.ID = pathID
+		ret.ID = pathID
+		ret.Root.SetIALAttr("id", ret.ID)
+	}
+
 	if needFix {
-		renderer := render.NewJSONRenderer(ret, luteEngine.RenderOptions)
+		renderer := render.NewJSONRenderer(ret, luteEngine.RenderOptions, luteEngine.ParseOptions)
 		data := renderer.Render()
 
 		if !util.UseSingleLineSave {
@@ -291,6 +321,7 @@ func parseJSON2Tree(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (re
 			data = buf.Bytes()
 		}
 
+		filePath := filepath.Join(util.DataDir, ret.Box, ret.Path)
 		if err = os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 			return
 		}
@@ -300,4 +331,63 @@ func parseJSON2Tree(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (re
 		}
 	}
 	return
+}
+
+// escapeAttributeValues 转义属性值
+func escapeAttributeValues(tree *parse.Tree) (hasEscaped bool) {
+	if util.ReadOnly || nil == tree || nil == tree.Root {
+		return false
+	}
+
+	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if !entering || !n.IsBlock() || "" == n.ID || 0 == len(n.KramdownIAL) {
+			return ast.WalkContinue
+		}
+
+		if escaped := escapeNodeAttributeValues(n); escaped {
+			hasEscaped = true
+		}
+		return ast.WalkContinue
+	})
+	return hasEscaped
+}
+
+// escapeNodeAttributeValues 转义节点的属性值
+func escapeNodeAttributeValues(node *ast.Node) (escaped bool) {
+	if nil == node || 0 == len(node.KramdownIAL) {
+		return false
+	}
+
+	for _, kv := range node.KramdownIAL {
+		if value := kv[1]; needsEscapeForValue(value) {
+			kv[1] = html.EscapeAttrVal(value)
+			escaped = true
+		}
+	}
+	return
+}
+
+// needsEscapeForValue 检查值是否需要转义（包含需要转义的特殊字符但尚未被转义）
+func needsEscapeForValue(value string) bool {
+	hasSpecialChars := false
+	for _, char := range value {
+		switch char {
+		case '<', '>', '&', '"', '{', '}':
+			hasSpecialChars = true
+		}
+		if hasSpecialChars {
+			break
+		}
+	}
+	if !hasSpecialChars {
+		return false
+	}
+
+	entities := []string{"&quot;", "&#123;", "&#125;", "&amp;", "&lt;", "&gt;"}
+	for _, entity := range entities {
+		if strings.Contains(value, entity) {
+			return false
+		}
+	}
+	return true
 }

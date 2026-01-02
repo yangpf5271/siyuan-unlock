@@ -68,12 +68,30 @@ try {
     app.exit();
 }
 
-const windowNavigate = (currentWindow) => {
+const windowNavigate = (currentWindow, windowType) => {
     currentWindow.webContents.on("will-navigate", (event) => {
         const url = event.url;
         if (url.startsWith(localServer)) {
-            return;
+            try {
+                const pathname = new URL(url).pathname;
+                // 所有窗口都允许认证页面
+                if (pathname === "/check-auth" || pathname === "/") {
+                    return;
+                }
+                if (pathname === "/stage/build/app/" && windowType === "app") {
+                    return;
+                }
+                if (pathname === "/stage/build/app/window.html" && windowType === "window") {
+                    return;
+                }
+                if (pathname.startsWith("/export/temp/") && windowType === "export") {
+                    return;
+                }
+            } catch (e) {
+                return;
+            }
         }
+        // 其他链接使用浏览器打开
         event.preventDefault();
         shell.openExternal(url);
     });
@@ -196,7 +214,9 @@ const showErrorWindow = (title, content) => {
     const errWindow = new BrowserWindow({
         width: Math.floor(screen.getPrimaryDisplay().size.width * 0.5),
         height: Math.floor(screen.getPrimaryDisplay().workAreaSize.height * 0.8),
-        frame: false,
+        frame: "darwin" === process.platform,
+        titleBarStyle: "hidden",
+        fullscreenable: false,
         icon: path.join(appDir, "stage", "icon-large.png"),
         webPreferences: {
             nodeIntegration: true, webviewTag: true, webSecurity: false, contextIsolation: false,
@@ -248,6 +268,7 @@ const initMainWindow = () => {
     try {
         oldWindowState = JSON.parse(fs.readFileSync(windowStatePath, "utf8"));
     } catch (e) {
+        writeLog("read window state failed: " + e);
         fs.writeFileSync(windowStatePath, "{}");
     }
     let defaultWidth;
@@ -258,7 +279,7 @@ const initMainWindow = () => {
         defaultHeight = Math.floor(screen.getPrimaryDisplay().workAreaSize.height * 0.8);
         workArea = screen.getPrimaryDisplay().workArea;
     } catch (e) {
-        console.error(e);
+        writeLog("get screen size failed: " + e);
     }
     const windowState = Object.assign({}, {
         isMaximized: false,
@@ -270,32 +291,48 @@ const initMainWindow = () => {
         height: defaultHeight,
     }, oldWindowState);
 
-    writeLog("windowStat [x=" + windowState.x + ", y=" + windowState.y + ", width=" + windowState.width + ", height=" + windowState.height + "], default [width=" + defaultWidth + ", height=" + defaultHeight + "], workArea [width=" + workArea.width + ", height=" + workArea.height + "]");
+    writeLog("window stat [x=" + windowState.x + ", y=" + windowState.y + ", width=" + windowState.width + ", height=" + windowState.height + "], " +
+        "default [x=0, y=0, width=" + defaultWidth + ", height=" + defaultHeight + "], " +
+        "old [x=" + oldWindowState.x + ", y=" + oldWindowState.y + ", width=" + oldWindowState.width + ", height=" + oldWindowState.height + "], " +
+        "workArea [width=" + workArea.width + ", height=" + workArea.height + "]");
 
     let resetToCenter = false;
     let x = windowState.x;
+    if (-32 < x && 0 > x) {
+        x = 0;
+    }
     let y = windowState.y;
+    if (-32 < y && 0 > y) {
+        y = 0;
+    }
     if (workArea) {
         // 窗口大于 workArea 时缩小会隐藏到左下角，这里使用最小值重置
-        if (windowState.width > workArea.width || windowState.height > workArea.height) { // 重启后窗口大小恢复默认问题 https://github.com/siyuan-note/siyuan/issues/7755
+        if (windowState.width > workArea.width + 32 || windowState.height > workArea.height + 32) {
+            // 重启后窗口大小恢复默认问题 https://github.com/siyuan-note/siyuan/issues/7755 https://github.com/siyuan-note/siyuan/issues/13732
+            // 这里 +32 是因为在某种情况下窗口大小会比 workArea 大几个像素导致恢复默认，+32 可以避免这种特殊情况
             windowState.width = Math.min(defaultWidth, workArea.width);
             windowState.height = Math.min(defaultHeight, workArea.height);
+            writeLog("reset window size [width=" + windowState.width + ", height=" + windowState.height + "]");
         }
 
         if (x >= workArea.width * 0.8 || y >= workArea.height * 0.8) {
             resetToCenter = true;
+            writeLog("reset window to center cause x or y >= 80% of workArea");
         }
     }
 
     if (x < 0 || y < 0) {
         resetToCenter = true;
+        writeLog("reset window to center cause x or y < 0");
     }
 
     if (windowState.width < 493) {
         windowState.width = 493;
+        writeLog("reset window width [493]");
     }
     if (windowState.height < 376) {
         windowState.height = 376;
+        writeLog("reset window height [376]");
     }
 
     // 创建主窗体
@@ -308,6 +345,7 @@ const initMainWindow = () => {
         fullscreenable: true,
         fullscreen: windowState.fullscreen,
         trafficLightPosition: {x: 8, y: 8},
+        transparent: "darwin" === process.platform, // 避免缩放窗口时出现边框
         webPreferences: {
             nodeIntegration: true,
             webviewTag: true,
@@ -324,6 +362,7 @@ const initMainWindow = () => {
     if (resetToCenter) {
         currentWindow.center();
     } else {
+        writeLog("window position [x=" + x + ", y=" + y + "]");
         currentWindow.setPosition(x, y);
     }
     currentWindow.webContents.userAgent = "SiYuan/" + appVer + " https://b3log.org/siyuan Electron " + currentWindow.webContents.userAgent;
@@ -334,16 +373,21 @@ const initMainWindow = () => {
     }).then((response) => {
         setProxy(`${response.data.proxy.scheme}://${response.data.proxy.host}:${response.data.proxy.port}`, currentWindow.webContents).then(() => {
             // 加载主界面
-            currentWindow.loadURL(getServer() + "/stage/build/app/index.html?v=" + new Date().getTime());
+            currentWindow.loadURL(getServer() + "/stage/build/app/?v=" + new Date().getTime());
         });
     });
 
-    currentWindow.webContents.session.setSpellCheckerLanguages(["en-US"]);
-
     // 发起互联网服务请求时绕过安全策略 https://github.com/siyuan-note/siyuan/issues/5516
     currentWindow.webContents.session.webRequest.onBeforeSendHeaders((details, cb) => {
-        if (-1 < details.url.indexOf("bili")) {
+        if (-1 < details.url.toLowerCase().indexOf("bili")) {
             // B 站不移除 Referer https://github.com/siyuan-note/siyuan/issues/94
+            cb({requestHeaders: details.requestHeaders});
+            return;
+        }
+
+        if (-1 < details.url.toLowerCase().indexOf("youtube")) {
+            // YouTube 设置 Referer https://github.com/siyuan-note/siyuan/issues/16319
+            details.requestHeaders["Referer"] = "https://b3log.org/siyuan/";
             cb({requestHeaders: details.requestHeaders});
             return;
         }
@@ -369,10 +413,7 @@ const initMainWindow = () => {
     });
 
     currentWindow.webContents.on("did-finish-load", () => {
-        let siyuanOpenURL;
-        if ("win32" === process.platform || "linux" === process.platform) {
-            siyuanOpenURL = process.argv.find((arg) => arg.startsWith("siyuan://"));
-        }
+        let siyuanOpenURL = process.argv.find((arg) => arg.startsWith("siyuan://"));
         if (siyuanOpenURL) {
             if (currentWindow.isMinimized()) {
                 currentWindow.restore();
@@ -427,7 +468,7 @@ const initMainWindow = () => {
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
     // 当前页面链接使用浏览器打开
-    windowNavigate(currentWindow);
+    windowNavigate(currentWindow, "app");
     currentWindow.on("close", (event) => {
         if (currentWindow && !currentWindow.isDestroyed()) {
             currentWindow.webContents.send("siyuan-save-close", false);
@@ -584,12 +625,12 @@ const initKernel = (workspace, port, lang) => {
                 writeLog("get kernel version failed: " + e.message);
                 if (14 < ++count) {
                     writeLog("get kernel ver failed");
-                    showErrorWindow("⚠️ 获取内核服务端口失败 Failed to get kernel serve port", "<div>获取内核服务端口失败，请确保程序拥有网络权限并不受防火墙和杀毒软件阻止。</div><div>Failed to get kernel serve port, please make sure the program has network permissions and is not blocked by firewalls and antivirus software.</div>");
+                    showErrorWindow("⚠️ 获取内核服务端口失败 Failed to Obtain Kernel Service Port", "<div>获取内核服务端口失败，请确保程序拥有网络权限并不受防火墙和杀毒软件阻止。</div><div>Failed to obtain kernel service port. Please ensure SiYuan has network permissions and is not blocked by firewalls or antivirus software.</div>");
                     bootWindow.destroy();
                     resolve(false);
                     return;
                 }
-                await sleep(200);
+                await sleep(500);
             }
         }
 
@@ -634,6 +675,7 @@ app.commandLine.appendSwitch("disable-web-security");
 app.commandLine.appendSwitch("auto-detect", "false");
 app.commandLine.appendSwitch("no-proxy-server");
 app.commandLine.appendSwitch("enable-features", "PlatformHEVCDecoderSupport");
+app.commandLine.appendSwitch("xdg-portal-required-version", "4");
 
 // Support set Chromium command line arguments on the desktop https://github.com/siyuan-note/siyuan/issues/9696
 writeLog("app is packaged [" + app.isPackaged + "], command line args [" + process.argv.join(", ") + "]");
@@ -659,6 +701,10 @@ for (let i = argStart; i < process.argv.length; i++) {
 
 app.whenReady().then(() => {
     const resetTrayMenu = (tray, lang, mainWindow) => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            return;
+        }
+
         const trayMenuTemplate = [{
             label: mainWindow.isVisible() ? lang.hideWindow : lang.showWindow, click: () => {
                 showHideWindow(tray, lang, mainWindow);
@@ -699,6 +745,10 @@ app.whenReady().then(() => {
         }
     };
     const showHideWindow = (tray, lang, mainWindow) => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            return;
+        }
+
         if (!mainWindow.isVisible()) {
             if (mainWindow.isMinimized()) {
                 mainWindow.restore();
@@ -735,9 +785,6 @@ app.whenReady().then(() => {
         const menu = Menu.buildFromTemplate(template);
         menu.popup({window: BrowserWindow.fromWebContents(event.sender)});
     });
-    ipcMain.on("siyuan-open-folder", (event, filePath) => {
-        shell.showItemInFolder(filePath);
-    });
     ipcMain.on("siyuan-first-quit", () => {
         app.exit();
     });
@@ -747,6 +794,9 @@ app.whenReady().then(() => {
         }
         if (data.cmd === "getContentsId") {
             return event.sender.id;
+        }
+        if (data.cmd === "availableSpellCheckerLanguages") {
+            return event.sender.session.availableSpellCheckerLanguages;
         }
         if (data.cmd === "setProxy") {
             return setProxy(data.proxyURL, event.sender);
@@ -785,10 +835,11 @@ app.whenReady().then(() => {
         if (data.cmd === "siyuan-open-file") {
             let hasMatch = false;
             BrowserWindow.getAllWindows().find(item => {
-                if (item.webContents.id === event.sender.id) {
+                const url = new URL(item.webContents.getURL());
+                if (item.webContents.id === event.sender.id || data.port !== url.port) {
                     return;
                 }
-                const ids = decodeURIComponent(new URL(item.webContents.getURL()).hash.substring(1)).split("\u200b");
+                const ids = decodeURIComponent(url.hash.substring(1)).split("\u200b");
                 const options = JSON.parse(data.options);
                 if (ids.includes(options.rootID) || ids.includes(options.assetPath)) {
                     item.focus();
@@ -834,6 +885,13 @@ app.whenReady().then(() => {
             event.sender.send("siyuan-event", "leave-full-screen");
         });
     });
+    ipcMain.on("siyuan-focus-fix", (event) => {
+        const currentWindow = getWindowByContentId(event.sender.id);
+        if (currentWindow && process.platform === "win32") {
+            currentWindow.blur();
+            currentWindow.focus();
+        }
+    });
     ipcMain.on("siyuan-cmd", (event, data) => {
         let cmd = data;
         let webContentsId = event.sender.id;
@@ -845,6 +903,17 @@ app.whenReady().then(() => {
         }
         const currentWindow = getWindowByContentId(webContentsId);
         switch (cmd) {
+            case "showItemInFolder":
+                shell.showItemInFolder(data.filePath);
+                break;
+            case "setSpellCheckerLanguages":
+                BrowserWindow.getAllWindows().forEach(item => {
+                    item.webContents.session.setSpellCheckerLanguages(data.languages);
+                });
+                break;
+            case "openPath":
+                shell.openPath(data.filePath);
+                break;
             case "openDevTools":
                 event.sender.openDevTools({mode: "bottom"});
                 break;
@@ -994,7 +1063,7 @@ app.whenReady().then(() => {
         printWin.center();
         printWin.webContents.userAgent = "SiYuan/" + appVer + " https://b3log.org/siyuan Electron " + printWin.webContents.userAgent;
         printWin.loadURL(data);
-        windowNavigate(printWin);
+        windowNavigate(printWin, "export");
     });
     ipcMain.on("siyuan-quit", (event, port) => {
         exitApp(port);
@@ -1022,6 +1091,7 @@ app.whenReady().then(() => {
             minWidth: 493,
             minHeight: 376,
             fullscreenable: true,
+            transparent: "darwin" === process.platform, // 避免缩放窗口时出现边框
             frame: "darwin" === process.platform,
             icon: path.join(appDir, "stage", "icon-large.png"),
             titleBarStyle: "hidden",
@@ -1043,7 +1113,7 @@ app.whenReady().then(() => {
         win.webContents.userAgent = "SiYuan/" + appVer + " https://b3log.org/siyuan Electron " + win.webContents.userAgent;
         win.webContents.session.setSpellCheckerLanguages(["en-US"]);
         win.loadURL(data.url);
-        windowNavigate(win);
+        windowNavigate(win, "window");
         win.on("close", (event) => {
             if (win && !win.isDestroyed()) {
                 win.webContents.send("siyuan-save-close");
@@ -1083,23 +1153,24 @@ app.whenReady().then(() => {
         if (exitWS) {
             return;
         }
-        let tray;
-        if ("win32" === process.platform || "linux" === process.platform) {
-            // 系统托盘
-            tray = new Tray(path.join(appDir, "stage", "icon-large.png"));
-            tray.setToolTip(`${path.basename(data.workspaceDir)} - SiYuan v${appVer}`);
-            const mainWindow = getWindowByContentId(event.sender.id);
-            if (!mainWindow) {
-                return;
-            }
-            resetTrayMenu(tray, data.languages, mainWindow);
-            tray.on("click", () => {
-                showHideWindow(tray, data.languages, mainWindow);
-            });
-        }
+
         workspaces.find(item => {
             if (!item.workspaceDir) {
                 item.workspaceDir = data.workspaceDir;
+                let tray;
+                if ("win32" === process.platform || "linux" === process.platform) {
+                    // 系统托盘
+                    tray = new Tray(path.join(appDir, "stage", "icon-large.png"));
+                    tray.setToolTip(`${path.basename(data.workspaceDir)} - SiYuan v${appVer}`);
+                    const mainWindow = getWindowByContentId(event.sender.id);
+                    if (!mainWindow || mainWindow.isDestroyed()) {
+                        return;
+                    }
+                    resetTrayMenu(tray, data.languages, mainWindow);
+                    tray.on("click", () => {
+                        showHideWindow(tray, data.languages, mainWindow);
+                    });
+                }
                 item.tray = tray;
                 return true;
             }

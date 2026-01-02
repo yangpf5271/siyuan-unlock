@@ -44,7 +44,27 @@ func copyStdMarkdown(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	ret.Data = model.ExportStdMarkdown(id)
+	assetsDestSpace2Underscore := false
+	if nil != arg["assetsDestSpace2Underscore"] {
+		assetsDestSpace2Underscore = arg["assetsDestSpace2Underscore"].(bool)
+	}
+
+	fillCSSVar := false
+	if nil != arg["fillCSSVar"] {
+		fillCSSVar = arg["fillCSSVar"].(bool)
+	}
+
+	adjustHeadingLevel := false
+	if nil != arg["adjustHeadingLevel"] {
+		adjustHeadingLevel = arg["adjustHeadingLevel"].(bool)
+	}
+
+	imgTag := false
+	if nil != arg["imgTag"] {
+		imgTag = arg["imgTag"].(bool)
+	}
+
+	ret.Data = model.ExportStdMarkdown(id, assetsDestSpace2Underscore, fillCSSVar, adjustHeadingLevel, imgTag)
 }
 
 func html2BlockDOM(c *gin.Context) {
@@ -58,13 +78,8 @@ func html2BlockDOM(c *gin.Context) {
 
 	dom := arg["dom"].(string)
 	luteEngine := util.NewLute()
-	luteEngine.SetSup(true)
-	luteEngine.SetSub(true)
-	luteEngine.SetMark(true)
-	luteEngine.SetGFMStrikethrough(true)
-	luteEngine.SetInlineAsterisk(true)
-	luteEngine.SetInlineUnderscore(true)
 	luteEngine.SetHTMLTag2TextMark(true)
+	luteEngine.SetHTML2MarkdownAttrs([]string{"alias", "memo", "bookmark", "custom-*"})
 	markdown, withMath, err := model.HTML2Markdown(dom, luteEngine)
 	if err != nil {
 		ret.Data = "Failed to convert"
@@ -174,7 +189,7 @@ func html2BlockDOM(c *gin.Context) {
 	parse.TextMarks2Inlines(tree) // 先将 TextMark 转换为 Inlines https://github.com/siyuan-note/siyuan/issues/13056
 	parse.NestedInlines2FlattedSpansHybrid(tree, false)
 
-	renderer := render.NewProtyleRenderer(tree, luteEngine.RenderOptions)
+	renderer := render.NewProtyleRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	output := renderer.Render()
 	ret.Data = gulu.Str.FromBytes(output)
 }

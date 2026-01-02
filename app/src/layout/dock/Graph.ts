@@ -8,7 +8,7 @@ import {BlockPanel} from "../../block/Panel";
 import {fullscreen} from "../../protyle/breadcrumb/action";
 import {fetchPost} from "../../util/fetch";
 import {openFileById} from "../../editor/util";
-import {updateHotkeyTip} from "../../protyle/util/compatibility";
+import {updateHotkeyAfterTip} from "../../protyle/util/compatibility";
 import {openGlobalSearch} from "../../search/util";
 import {App} from "../../index";
 import {checkFold} from "../../util/noRelyPCFunction";
@@ -109,6 +109,10 @@ export class Graph extends Model {
     <input data-type="blockquote" type="checkbox" class="b3-switch"${window.siyuan.config.graph.global.type.blockquote ? " checked" : ""}/>
 </label>
 <label>
+    <span>${window.siyuan.languages.callout}</span> 
+    <input data-type="callout" type="checkbox" class="b3-switch"${window.siyuan.config.graph.global.type.callout ? " checked" : ""}/>
+</label>
+<label>
     <span>${window.siyuan.languages.superBlock}</span> 
     <input data-type="super" type="checkbox" class="b3-switch"${window.siyuan.config.graph.global.type.super ? " checked" : ""}/>
 </label>
@@ -193,6 +197,10 @@ export class Graph extends Model {
     <input data-type="blockquote" type="checkbox" class="b3-switch"${window.siyuan.config.graph.local.type.blockquote ? " checked" : ""}/>
 </label>
 <label>
+    <span>${window.siyuan.languages.callout}</span> 
+    <input data-type="callout" type="checkbox" class="b3-switch"${window.siyuan.config.graph.local.type.callout ? " checked" : ""}/>
+</label>
+<label>
     <span>${window.siyuan.languages.superBlock}</span> 
     <input data-type="super" type="checkbox" class="b3-switch"${window.siyuan.config.graph.local.type.super ? " checked" : ""}/>
 </label>
@@ -274,7 +282,7 @@ export class Graph extends Model {
         <svg><use xlink:href="#iconMore"></use></svg>
     </div> 
     <span class="${this.type === "local" ? "fn__none " : ""}fn__space"></span>
-    <span data-type="min"  class="${this.type === "local" ? "fn__none " : ""}block__icon b3-tooltips b3-tooltips__sw" aria-label="${window.siyuan.languages.min} ${updateHotkeyTip(window.siyuan.config.keymap.general.closeTab.custom)}"><svg><use xlink:href='#iconMin'></use></svg></span>
+    <span data-type="min"  class="${this.type === "local" ? "fn__none " : ""}block__icon b3-tooltips b3-tooltips__sw" aria-label="${window.siyuan.languages.min}${updateHotkeyAfterTip(window.siyuan.config.keymap.general.closeTab.custom)}"><svg><use xlink:href='#iconMin'></use></svg></span>
 </div>
 <div class="graph__panel">
     ${panelHTML}
@@ -305,7 +313,7 @@ export class Graph extends Model {
                 } else if (target.classList.contains("block__icon")) {
                     const dataType = target.getAttribute("data-type");
                     if (dataType === "min") {
-                        getDockByType(this.type === "global" ? "globalGraph" : "graph").toggleModel(this.type === "global" ? "globalGraph" : "graph");
+                        getDockByType(this.type === "global" ? "globalGraph" : "graph").toggleModel(this.type === "global" ? "globalGraph" : "graph", false, true);
                     } else if (dataType === "menu") {
                         if (target.classList.contains("ft__primary")) {
                             target.classList.remove("ft__primary");
@@ -341,7 +349,6 @@ export class Graph extends Model {
         });
         this.inputElement.addEventListener("compositionend", () => {
             this.searchGraph(false);
-            this.inputElement.classList.add("search__input--block");
         });
         this.inputElement.addEventListener("blur", (event: InputEvent) => {
             const inputElement = event.target as HTMLInputElement;
@@ -350,11 +357,6 @@ export class Graph extends Model {
         this.inputElement.addEventListener("input", (event: InputEvent) => {
             if (event.isComposing) {
                 return;
-            }
-            if (this.inputElement.value === "") {
-                this.inputElement.classList.remove("search__input--block");
-            } else {
-                this.inputElement.classList.add("search__input--block");
             }
             this.searchGraph(false);
         });
@@ -407,6 +409,7 @@ export class Graph extends Model {
         (this.panelElement.querySelector("[data-type='heading']") as HTMLInputElement).checked = conf.type.heading;
         (this.panelElement.querySelector("[data-type='arrow']") as HTMLInputElement).checked = conf.d3.arrow;
         (this.panelElement.querySelector("[data-type='blockquote']") as HTMLInputElement).checked = conf.type.blockquote;
+        (this.panelElement.querySelector("[data-type='callout']") as HTMLInputElement).checked = conf.type.callout;
         (this.panelElement.querySelector("[data-type='code']") as HTMLInputElement).checked = conf.type.code;
         this.searchGraph(false);
     }
@@ -427,6 +430,7 @@ export class Graph extends Model {
             tag: (this.panelElement.querySelector("[data-type='tag']") as HTMLInputElement).checked,
             heading: (this.panelElement.querySelector("[data-type='heading']") as HTMLInputElement).checked,
             blockquote: (this.panelElement.querySelector("[data-type='blockquote']") as HTMLInputElement).checked,
+            callout: (this.panelElement.querySelector("[data-type='callout']") as HTMLInputElement).checked,
             code: (this.panelElement.querySelector("[data-type='code']") as HTMLInputElement).checked,
         };
         const d3 = {
@@ -549,6 +553,9 @@ export class Graph extends Model {
                 case "NodeBlockquote":
                     item.color = {background: rootStyle.getPropertyValue("--b3-graph-bq-point").trim()};
                     break;
+                case "NodeCallout":
+                    item.color = {background: rootStyle.getPropertyValue("--b3-graph-callout-point").trim()};
+                    break;
                 case "NodeSuperBlock":
                     item.color = {background: rootStyle.getPropertyValue("--b3-graph-super-point").trim()};
                     break;
@@ -568,7 +575,7 @@ export class Graph extends Model {
                 item.color = {color: rootStyle.getPropertyValue("--b3-graph-line").trim()};
             }
         });
-        addScript(`${Constants.PROTYLE_CDN}/js/vis/vis-network.min.js?v=9.1.2`, "protyleVisScript").then(() => {
+        addScript(`${Constants.PROTYLE_CDN}/js/vis/vis-network.min.js?v=9.1.13`, "protyleVisScript").then(() => {
             this.network?.destroy();
             if (!this.graphData || !this.graphData.nodes || this.graphData.nodes.length === 0) {
                 return;
@@ -755,7 +762,7 @@ export class Graph extends Model {
                         isBacklink: false,
                         x: params.event.center.x,
                         y: params.event.center.y,
-                        nodeIds: [node.id],
+                        refDefs: [{refID: node.id}]
                     }));
                 } else {
                     checkFold(node.id, (zoomIn, action: TProtyleAction[]) => {

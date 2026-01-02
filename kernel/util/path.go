@@ -23,11 +23,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 )
@@ -36,6 +38,14 @@ var (
 	SSL       = false
 	UserAgent = "SiYuan/" + Ver
 )
+
+func TrimSpaceInPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+	}
+	return strings.Join(parts, "/")
+}
 
 func GetTreeID(treePath string) string {
 	if strings.Contains(treePath, "\\") {
@@ -155,6 +165,14 @@ func IsRelativePath(dest string) bool {
 	if '/' == dest[0] {
 		return false
 	}
+
+	// 检查特定协议前缀
+	lowerDest := strings.ToLower(dest)
+	if strings.HasPrefix(lowerDest, "mailto:") ||
+		strings.HasPrefix(lowerDest, "tel:") ||
+		strings.HasPrefix(lowerDest, "sms:") {
+		return false
+	}
 	return !strings.Contains(dest, ":/") && !strings.Contains(dest, ":\\")
 }
 
@@ -188,16 +206,39 @@ func GetChildDocDepth(treeAbsPath string) (ret int) {
 }
 
 func NormalizeConcurrentReqs(concurrentReqs int, provider int) int {
-	if 1 > concurrentReqs {
-		if 2 == provider { // S3
-			return 8
-		} else if 3 == provider { // WebDAV
-			return 1
+	switch provider {
+	case 0: // SiYuan
+		switch {
+		case concurrentReqs < 1:
+			concurrentReqs = 8
+		case concurrentReqs > 16:
+			concurrentReqs = 16
+		default:
 		}
-		return 8
-	}
-	if 16 < concurrentReqs {
-		return 16
+	case 2: // S3
+		switch {
+		case concurrentReqs < 1:
+			concurrentReqs = 8
+		case concurrentReqs > 16:
+			concurrentReqs = 16
+		default:
+		}
+	case 3: // WebDAV
+		switch {
+		case concurrentReqs < 1:
+			concurrentReqs = 1
+		case concurrentReqs > 16:
+			concurrentReqs = 16
+		default:
+		}
+	case 4: // Local File System
+		switch {
+		case concurrentReqs < 1:
+			concurrentReqs = 16
+		case concurrentReqs > 1024:
+			concurrentReqs = 1024
+		default:
+		}
 	}
 	return concurrentReqs
 }
@@ -223,6 +264,18 @@ func NormalizeEndpoint(endpoint string) string {
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 		endpoint = "http://" + endpoint
 	}
+	if !strings.HasSuffix(endpoint, "/") {
+		endpoint = endpoint + "/"
+	}
+	return endpoint
+}
+
+func NormalizeLocalPath(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if "" == endpoint {
+		return ""
+	}
+	endpoint = filepath.ToSlash(filepath.Clean(endpoint))
 	if !strings.HasSuffix(endpoint, "/") {
 		endpoint = endpoint + "/"
 	}
@@ -273,6 +326,27 @@ var (
 	SiYuanAssetsVideo = []string{".mov", ".weba", ".mkv", ".mp4", ".webm"}
 )
 
+func IsAssetsImage(assetPath string) bool {
+	ext := strings.ToLower(filepath.Ext(assetPath))
+	if "" == ext {
+		absPath := filepath.Join(DataDir, assetPath)
+		f, err := filelock.OpenFile(absPath, os.O_RDONLY, 0644)
+		if err != nil {
+			logging.LogErrorf("open file [%s] failed: %s", absPath, err)
+			return false
+		}
+		defer filelock.CloseFile(f)
+		m, err := mimetype.DetectReader(f)
+		if nil != err {
+			logging.LogWarnf("detect file [%s] mimetype failed: %v", absPath, err)
+			return false
+		}
+
+		ext = m.Extension()
+	}
+	return gulu.Str.Contains(ext, SiYuanAssetsImage)
+}
+
 func IsDisplayableAsset(p string) bool {
 	ext := strings.ToLower(filepath.Ext(p))
 	if "" == ext {
@@ -305,4 +379,33 @@ func GetAbsPathInWorkspace(relPath string) (string, error) {
 
 func IsAbsPathInWorkspace(absPath string) bool {
 	return IsSubPath(WorkspaceDir, absPath)
+}
+
+// IsWorkspaceDir 判断指定目录是否是工作空间目录。
+func IsWorkspaceDir(dir string) bool {
+	conf := filepath.Join(dir, "conf", "conf.json")
+	data, err := os.ReadFile(conf)
+	if nil != err {
+		return false
+	}
+	return strings.Contains(string(data), "kernelVersion")
+}
+
+// IsPartitionRootPath checks if the given path is a partition root path.
+func IsPartitionRootPath(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	// Clean the path to remove any trailing slashes
+	cleanPath := filepath.Clean(path)
+
+	// Check if the path is the root path based on the operating system
+	if runtime.GOOS == "windows" {
+		// On Windows, root paths are like "C:\", "D:\", etc.
+		return len(cleanPath) == 3 && cleanPath[1] == ':' && cleanPath[2] == '\\'
+	} else {
+		// On Unix-like systems, the root path is "/"
+		return cleanPath == "/"
+	}
 }

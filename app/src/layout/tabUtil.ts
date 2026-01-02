@@ -159,42 +159,44 @@ export const getDockByType = (type: TDock | string) => {
 
 export const newCenterEmptyTab = (app: App) => {
     return new Tab({
-        panel: `<div class="layout__empty b3-list">
-    <div class="${!window.siyuan.config.readonly ? " fn__none" : ""}">
-        <div class="config-about__logo">
-            <img src="/stage/icon.png">
-            ${window.siyuan.languages.siyuanNote}
+        panel: `<div class="layout__empty">
+        <div class="${!window.siyuan.config.readonly ? " fn__none" : ""}">
+            <div class="config-about__logo">
+                <img src="/stage/icon.png">
+                ${window.siyuan.languages.siyuanNote}
+            </div>
+            <div class="b3-label__text">${window.siyuan.languages.slogan}</div>
         </div>
-        <div class="b3-label__text">${window.siyuan.languages.slogan}</div>
-    </div>
-    <div class="fn__hr"></div>
-    <div class="b3-list-item" id="editorEmptySearch">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconSearch"></use></svg>
-        <span>${window.siyuan.languages.search}</span>
-        <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.globalSearch.custom)}</span>
-    </div>
-    <div id="editorEmptyRecent" class="b3-list-item">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconList"></use></svg>
-        <span>${window.siyuan.languages.recentDocs}</span>
-        <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.recentDocs.custom)}</span>
-    </div>
-    <div id="editorEmptyHistory" class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconHistory"></use></svg>
-        <span>${window.siyuan.languages.dataHistory}</span>
-        <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.dataHistory.custom)}</span>
-    </div>
-    <div class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}" id="editorEmptyFile">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconFile"></use></svg>
-        <span>${window.siyuan.languages.newFile}</span>
-        <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.newFile.custom)}</span>
-    </div>
-    <div class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}" id="editorEmptyNewNotebook">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconFilesRoot"></use></svg>
-        <span>${window.siyuan.languages.newNotebook}</span>
-    </div>
-    <div class="b3-list-item${(isIPad() || window.siyuan.config.readonly) ? " fn__none" : ""}" id="editorEmptyHelp">
-        <svg class="b3-list-item__graphic"><use xlink:href="#iconHelp"></use></svg>
-        <span>${window.siyuan.languages.userGuide}</span>
+        <div class="fn__hr"></div>
+    <div class="b3-list" style="margin: 0 auto">
+        <div class="b3-list-item" id="editorEmptySearch">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconSearch"></use></svg>
+            <span>${window.siyuan.languages.search}</span>
+            <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.globalSearch.custom)}</span>
+        </div>
+        <div id="editorEmptyRecent" class="b3-list-item">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconList"></use></svg>
+            <span>${window.siyuan.languages.recentDocs}</span>
+            <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.recentDocs.custom)}</span>
+        </div>
+        <div id="editorEmptyHistory" class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconHistory"></use></svg>
+            <span>${window.siyuan.languages.dataHistory}</span>
+            <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.dataHistory.custom)}</span>
+        </div>
+        <div class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}" id="editorEmptyFile">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconFile"></use></svg>
+            <span>${window.siyuan.languages.newFile}</span>
+            <span class="b3-list-item__meta">${updateHotkeyTip(window.siyuan.config.keymap.general.newFile.custom)}</span>
+        </div>
+        <div class="b3-list-item${window.siyuan.config.readonly ? " fn__none" : ""}" id="editorEmptyNewNotebook">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconFilesRoot"></use></svg>
+            <span>${window.siyuan.languages.newNotebook}</span>
+        </div>
+        <div class="b3-list-item${(isIPad() || window.siyuan.config.readonly) ? " fn__none" : ""}" id="editorEmptyHelp">
+            <svg class="b3-list-item__graphic"><use xlink:href="#iconHelp"></use></svg>
+            <span>${window.siyuan.languages.userGuide}</span>
+        </div>
     </div>
 </div>`,
         callback(tab: Tab) {
@@ -267,6 +269,20 @@ export const copyTab = (app: App, tab: Tab) => {
                     rootId: tab.model.editor.protyle.block.rootID,
                     // https://github.com/siyuan-note/siyuan/issues/12150
                     action: newAction,
+                    afterInitProtyle(editor) {
+                        // https://github.com/siyuan-note/siyuan/issues/13851
+                        if (tab.model instanceof Editor) {
+                            const copyResizeTopElement = tab.model.editor.protyle.wysiwyg.element.querySelector("[data-resize-top]");
+                            if (copyResizeTopElement) {
+                                const newElement = editor.protyle.wysiwyg.element.querySelector(`[data-node-id="${copyResizeTopElement.getAttribute("data-node-id")}"]`);
+                                if (newElement) {
+                                    editor.protyle.observerLoad?.disconnect();
+                                    newElement.scrollIntoView();
+                                    editor.protyle.contentElement.scrollTop += parseInt(copyResizeTopElement.getAttribute("data-resize-top"));
+                                }
+                            }
+                        }
+                    }
                 });
             } else if (tab.model instanceof Asset) {
                 model = new Asset({

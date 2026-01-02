@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"unicode"
 
 	"github.com/88250/gulu"
@@ -65,6 +66,15 @@ func RemoveEmojiInvisible(text string) (ret string) {
 
 func RemoveInvalid(text string) (ret string) {
 	ret = gulu.Str.RemoveInvisible(text)
+	ret = gulu.Str.RemovePUA(ret)
+	return
+}
+
+func RemoveInvalidRetainCtrl(text string) (ret string) {
+	ret = strings.ReplaceAll(text, "\u00A0", " ") // NBSP 转换为普通空格
+	ret = gulu.Str.RemoveZeroWidthNoBreakSpace(ret)
+	ret = gulu.Str.RemoveZeroWidthSpace(ret)
+	// 不要移除零宽连字符，因为 emoji 需要 https://github.com/siyuan-note/siyuan/issues/14272
 	ret = gulu.Str.RemovePUA(ret)
 	return
 }

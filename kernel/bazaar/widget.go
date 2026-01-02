@@ -47,7 +47,11 @@ func Widgets() (widgets []*Widget) {
 		return
 	}
 	bazaarIndex := getBazaarIndex()
+	if 1 > len(bazaarIndex) {
+		return
+	}
 
+	requestFailed := false
 	waitGroup := &sync.WaitGroup{}
 	lock := &sync.Mutex{}
 	p, _ := ants.NewPoolWithFunc(8, func(arg interface{}) {
@@ -63,21 +67,27 @@ func Widgets() (widgets []*Widget) {
 			return
 		}
 
+		if requestFailed {
+			return
+		}
+
 		widget := &Widget{}
 		innerU := util.BazaarOSSServer + "/package/" + repoURL + "/widget.json"
 		innerResp, innerErr := httpclient.NewBrowserRequest().SetSuccessResult(widget).Get(innerU)
 		if nil != innerErr {
 			logging.LogErrorf("get bazaar package [%s] failed: %s", repoURL, innerErr)
+			requestFailed = true
 			return
 		}
 		if 200 != innerResp.StatusCode {
 			logging.LogErrorf("get bazaar package [%s] failed: %d", innerU, innerResp.StatusCode)
+			requestFailed = true
 			return
 		}
 
-		if disallowDisplayBazaarPackage(widget.Package) {
-			return
-		}
+		widget.DisallowInstall = disallowInstallBazaarPackage(widget.Package)
+		widget.DisallowUpdate = disallowInstallBazaarPackage(widget.Package)
+		widget.UpdateRequiredMinAppVer = widget.MinAppVersion
 
 		widget.URL = strings.TrimSuffix(widget.URL, "/")
 		repoURLHash := strings.Split(repoURL, "@")
@@ -147,8 +157,13 @@ func InstalledWidgets() (ret []*Widget) {
 			continue
 		}
 
-		installPath := filepath.Join(util.DataDir, "widgets", dirName)
+		widget.DisallowInstall = disallowInstallBazaarPackage(widget.Package)
+		if bazaarPkg := getBazaarWidget(widget.Name, bazaarWidgets); nil != bazaarPkg {
+			widget.DisallowUpdate = disallowInstallBazaarPackage(bazaarPkg.Package)
+			widget.UpdateRequiredMinAppVer = bazaarPkg.MinAppVersion
+		}
 
+		installPath := filepath.Join(util.DataDir, "widgets", dirName)
 		widget.Installed = true
 		widget.RepoURL = widget.URL
 		widget.PreviewURL = "/widgets/" + dirName + "/preview.png"
@@ -157,9 +172,9 @@ func InstalledWidgets() (ret []*Widget) {
 		widget.PreferredFunding = getPreferredFunding(widget.Funding)
 		widget.PreferredName = GetPreferredName(widget.Package)
 		widget.PreferredDesc = getPreferredDesc(widget.Description)
-		info, statErr := os.Stat(filepath.Join(installPath, "README.md"))
+		info, statErr := os.Stat(filepath.Join(installPath, "widget.json"))
 		if nil != statErr {
-			logging.LogWarnf("stat install theme README.md failed: %s", statErr)
+			logging.LogWarnf("stat install widget.json failed: %s", statErr)
 			continue
 		}
 		widget.HInstallDate = info.ModTime().Format("2006-01-02")
@@ -171,18 +186,20 @@ func InstalledWidgets() (ret []*Widget) {
 			packageInstallSizeCache.SetDefault(widget.RepoURL, is)
 		}
 		widget.HInstallSize = humanize.BytesCustomCeil(uint64(widget.InstallSize), 2)
-		readmeFilename := getPreferredReadme(widget.Readme)
-		readme, readErr := os.ReadFile(filepath.Join(installPath, readmeFilename))
-		if nil != readErr {
-			logging.LogWarnf("read installed README.md failed: %s", readErr)
-			continue
-		}
-
-		widget.PreferredReadme, _ = renderREADME(widget.URL, readme)
+		widget.PreferredReadme = loadInstalledReadme(installPath, "/widgets/"+dirName+"/", widget.Readme)
 		widget.Outdated = isOutdatedWidget(widget, bazaarWidgets)
 		ret = append(ret, widget)
 	}
 	return
+}
+
+func getBazaarWidget(name string, widgets []*Widget) *Widget {
+	for _, p := range widgets {
+		if p.Name == name {
+			return p
+		}
+	}
+	return nil
 }
 
 func InstallWidget(repoURL, repoHash, installPath string, systemID string) error {

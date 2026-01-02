@@ -19,7 +19,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"github.com/siyuan-note/siyuan/kernel/task"
 	"path"
 	"path/filepath"
 	"strings"
@@ -27,8 +26,10 @@ import (
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/emirpasic/gods/sets/hashset"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/bazaar"
+	"github.com/siyuan-note/siyuan/kernel/task"
 	"github.com/siyuan-note/siyuan/kernel/util"
 	"golang.org/x/mod/semver"
 )
@@ -48,7 +49,7 @@ func BatchUpdateBazaarPackages(frontend string) {
 		err := bazaar.InstallPlugin(plugin.RepoURL, plugin.RepoHash, filepath.Join(util.DataDir, "plugins", plugin.Name), Conf.System.ID)
 		if err != nil {
 			logging.LogErrorf("update plugin [%s] failed: %s", plugin.Name, err)
-			util.PushErrMsg(fmt.Sprintf(Conf.language(238)), 5000)
+			util.PushErrMsg(fmt.Sprintf(Conf.language(238), plugin.Name), 5000)
 			return
 		}
 
@@ -60,7 +61,7 @@ func BatchUpdateBazaarPackages(frontend string) {
 		err := bazaar.InstallWidget(widget.RepoURL, widget.RepoHash, filepath.Join(util.DataDir, "widgets", widget.Name), Conf.System.ID)
 		if err != nil {
 			logging.LogErrorf("update widget [%s] failed: %s", widget.Name, err)
-			util.PushErrMsg(fmt.Sprintf(Conf.language(238)), 5000)
+			util.PushErrMsg(fmt.Sprintf(Conf.language(238), widget.Name), 5000)
 			return
 		}
 
@@ -72,7 +73,7 @@ func BatchUpdateBazaarPackages(frontend string) {
 		err := bazaar.InstallIcon(icon.RepoURL, icon.RepoHash, filepath.Join(util.IconsPath, icon.Name), Conf.System.ID)
 		if err != nil {
 			logging.LogErrorf("update icon [%s] failed: %s", icon.Name, err)
-			util.PushErrMsg(fmt.Sprintf(Conf.language(238)), 5000)
+			util.PushErrMsg(fmt.Sprintf(Conf.language(238), icon.Name), 5000)
 			return
 		}
 
@@ -84,7 +85,7 @@ func BatchUpdateBazaarPackages(frontend string) {
 		err := bazaar.InstallTemplate(template.RepoURL, template.RepoHash, filepath.Join(util.DataDir, "templates", template.Name), Conf.System.ID)
 		if err != nil {
 			logging.LogErrorf("update template [%s] failed: %s", template.Name, err)
-			util.PushErrMsg(fmt.Sprintf(Conf.language(238)), 5000)
+			util.PushErrMsg(fmt.Sprintf(Conf.language(238), template.Name), 5000)
 			return
 		}
 
@@ -96,7 +97,7 @@ func BatchUpdateBazaarPackages(frontend string) {
 		err := bazaar.InstallTheme(theme.RepoURL, theme.RepoHash, filepath.Join(util.ThemesPath, theme.Name), Conf.System.ID)
 		if err != nil {
 			logging.LogErrorf("update theme [%s] failed: %s", theme.Name, err)
-			util.PushErrMsg(fmt.Sprintf(Conf.language(238)), 5000)
+			util.PushErrMsg(fmt.Sprintf(Conf.language(238), theme.Name), 5000)
 			return
 		}
 
@@ -200,6 +201,8 @@ func BazaarPlugins(frontend, keyword string) (plugins []*bazaar.Plugin) {
 			if pluginConf, err := bazaar.PluginJSON(plugin.Name); err == nil && nil != plugin {
 				plugin.Outdated = 0 > semver.Compare("v"+pluginConf.Version, "v"+plugin.Version)
 			}
+		} else {
+			plugin.Outdated = false
 		}
 	}
 	return
@@ -217,7 +220,7 @@ func filterPlugins(plugins []*bazaar.Plugin, keyword string) (ret []*bazaar.Plug
 }
 
 func InstalledPlugins(frontend, keyword string) (plugins []*bazaar.Plugin) {
-	plugins = bazaar.InstalledPlugins(frontend, true)
+	plugins = bazaar.InstalledPlugins(frontend)
 	plugins = filterPlugins(plugins, keyword)
 	petals := getPetals()
 	for _, plugin := range plugins {
@@ -254,6 +257,9 @@ func UninstallBazaarPlugin(pluginName, frontend string) error {
 	}
 	petals = tmp
 	savePetals(petals)
+
+	uninstallPluginSet := hashset.New(pluginName)
+	PushReloadPlugin(nil, nil, nil, uninstallPluginSet, "")
 	return nil
 }
 
@@ -266,6 +272,8 @@ func BazaarWidgets(keyword string) (widgets []*bazaar.Widget) {
 			if widgetConf, err := bazaar.WidgetJSON(widget.Name); err == nil && nil != widget {
 				widget.Outdated = 0 > semver.Compare("v"+widgetConf.Version, "v"+widget.Version)
 			}
+		} else {
+			widget.Outdated = false
 		}
 	}
 	return
@@ -352,6 +360,7 @@ func InstallBazaarIcon(repoURL, repoHash, iconName string) error {
 	Conf.Appearance.Icon = iconName
 	Conf.Save()
 	InitAppearance()
+	util.BroadcastByType("main", "setAppearance", 0, "", Conf.Appearance)
 	return nil
 }
 
@@ -427,6 +436,7 @@ func InstallBazaarTheme(repoURL, repoHash, themeName string, mode int, update bo
 	}
 
 	InitAppearance()
+	util.BroadcastByType("main", "setAppearance", 0, "", Conf.Appearance)
 	return nil
 }
 
@@ -452,6 +462,8 @@ func BazaarTemplates(keyword string) (templates []*bazaar.Template) {
 			if templateConf, err := bazaar.TemplateJSON(template.Name); err == nil && nil != templateConf {
 				template.Outdated = 0 > semver.Compare("v"+templateConf.Version, "v"+template.Version)
 			}
+		} else {
+			template.Outdated = false
 		}
 	}
 	return
@@ -501,6 +513,7 @@ func matchPackage(keywords []string, pkg *bazaar.Package) bool {
 		return false
 	}
 
+	hits := map[string]bool{}
 	for _, keyword := range keywords {
 		if strings.Contains(strings.ToLower(pkg.DisplayName.Default), keyword) ||
 			strings.Contains(strings.ToLower(pkg.DisplayName.ZhCN), keyword) ||
@@ -512,16 +525,18 @@ func matchPackage(keywords []string, pkg *bazaar.Package) bool {
 			strings.Contains(strings.ToLower(pkg.Description.EnUS), keyword) ||
 			strings.Contains(strings.ToLower(path.Base(pkg.RepoURL)), keyword) ||
 			strings.Contains(strings.ToLower(pkg.Author), keyword) {
-			return true
+			hits[keyword] = true
+			continue
 		}
 
 		for _, pkgKeyword := range pkg.Keywords {
 			if strings.Contains(strings.ToLower(pkgKeyword), keyword) {
-				return true
+				hits[keyword] = true
+				break
 			}
 		}
 	}
-	return false
+	return len(hits) == len(keywords)
 }
 
 func getSearchKeywords(query string) (ret []string) {

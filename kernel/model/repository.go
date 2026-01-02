@@ -45,6 +45,7 @@ import (
 	"github.com/88250/lute/parse"
 	"github.com/88250/lute/render"
 	"github.com/emirpasic/gods/sets/hashset"
+	"github.com/siyuan-note/dataparser"
 	"github.com/siyuan-note/dejavu"
 	"github.com/siyuan-note/dejavu/cloud"
 	"github.com/siyuan-note/dejavu/entity"
@@ -53,8 +54,6 @@ import (
 	"github.com/siyuan-note/httpclient"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/conf"
-	"github.com/siyuan-note/siyuan/kernel/filesys"
-	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/task"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
@@ -132,7 +131,7 @@ func autoPurgeRepo(cron bool) {
 	}
 
 	todayDate := now.Format("2006-01-02")
-	// 筛选出每日需要保留的索引
+	// 过滤出每日需要保留的索引
 	var retentionIndexIDs []string
 	for date, indexes := range dateGroupedIndexes {
 		if len(indexes) <= Conf.Repo.RetentionIndexesDaily || todayDate == date {
@@ -251,10 +250,10 @@ func OpenRepoSnapshotDoc(fileID string) (title, content string, displayInText bo
 		luteEngine.RenderOptions.ProtyleContenteditable = false
 		if displayInText {
 			util.PushMsg(Conf.Language(36), 5000)
-			formatRenderer := render.NewFormatRenderer(snapshotTree, luteEngine.RenderOptions)
+			formatRenderer := render.NewFormatRenderer(snapshotTree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 			content = gulu.Str.FromBytes(formatRenderer.Render())
 		} else {
-			content = luteEngine.Tree2BlockDOM(snapshotTree, luteEngine.RenderOptions)
+			content = luteEngine.Tree2BlockDOM(snapshotTree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 		}
 	} else {
 		displayInText = true
@@ -426,7 +425,7 @@ func parseTitleInSnapshot(fileID string, repo *dejavu.Repo, luteEngine *lute.Lut
 		}
 
 		var tree *parse.Tree
-		tree, err = filesys.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
+		tree, err = dataparser.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
 		if err != nil {
 			logging.LogErrorf("parse file [%s] failed: %s", fileID, err)
 			return
@@ -439,7 +438,7 @@ func parseTitleInSnapshot(fileID string, repo *dejavu.Repo, luteEngine *lute.Lut
 
 func parseTreeInSnapshot(data []byte, luteEngine *lute.Lute) (isLargeDoc bool, tree *parse.Tree, err error) {
 	isLargeDoc = 1024*1024*1 <= len(data)
-	tree, err = filesys.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
+	tree, err = dataparser.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
 	if err != nil {
 		return
 	}
@@ -772,13 +771,7 @@ func checkoutRepo(id string) {
 		return
 	}
 
-	task.AppendTask(task.DatabaseIndexFull, fullReindex)
-	task.AppendTask(task.DatabaseIndexRef, IndexRefs)
-	go func() {
-		sql.FlushQueue()
-		ResetVirtualBlockRefCache()
-	}()
-	task.AppendTask(task.ReloadUI, util.ReloadUIResetScroll)
+	FullReindex()
 
 	if syncEnabled {
 		task.AppendAsyncTaskWithDelay(task.PushMsg, 7*time.Second, util.PushMsg, Conf.Language(134), 0)
@@ -803,7 +796,7 @@ func DownloadCloudSnapshot(tag, id string) (err error) {
 			util.PushErrMsg(Conf.Language(29), 5000)
 			return
 		}
-	case conf.ProviderWebDAV, conf.ProviderS3:
+	case conf.ProviderWebDAV, conf.ProviderS3, conf.ProviderLocal:
 		if !IsPaidUser() {
 			util.PushErrMsg(Conf.Language(214), 5000)
 			return
@@ -845,7 +838,7 @@ func UploadCloudSnapshot(tag, id string) (err error) {
 			util.PushErrMsg(Conf.Language(29), 5000)
 			return
 		}
-	case conf.ProviderWebDAV, conf.ProviderS3:
+	case conf.ProviderWebDAV, conf.ProviderS3, conf.ProviderLocal:
 		if !IsPaidUser() {
 			util.PushErrMsg(Conf.Language(214), 5000)
 			return
@@ -891,7 +884,7 @@ func RemoveCloudRepoTag(tag string) (err error) {
 			util.PushErrMsg(Conf.Language(29), 5000)
 			return
 		}
-	case conf.ProviderWebDAV, conf.ProviderS3:
+	case conf.ProviderWebDAV, conf.ProviderS3, conf.ProviderLocal:
 		if !IsPaidUser() {
 			util.PushErrMsg(Conf.Language(214), 5000)
 			return
@@ -923,7 +916,7 @@ func GetCloudRepoTagSnapshots() (ret []*dejavu.Log, err error) {
 			util.PushErrMsg(Conf.Language(29), 5000)
 			return
 		}
-	case conf.ProviderWebDAV, conf.ProviderS3:
+	case conf.ProviderWebDAV, conf.ProviderS3, conf.ProviderLocal:
 		if !IsPaidUser() {
 			util.PushErrMsg(Conf.Language(214), 5000)
 			return
@@ -959,7 +952,7 @@ func GetCloudRepoSnapshots(page int) (ret []*dejavu.Log, pageCount, totalCount i
 			util.PushErrMsg(Conf.Language(29), 5000)
 			return
 		}
-	case conf.ProviderWebDAV, conf.ProviderS3:
+	case conf.ProviderWebDAV, conf.ProviderS3, conf.ProviderLocal:
 		if !IsPaidUser() {
 			util.PushErrMsg(Conf.Language(214), 5000)
 			return
@@ -1155,6 +1148,8 @@ func syncRepoDownload() (err error) {
 		return
 	}
 
+	beforeSyncPetals := getPetals()
+
 	syncContext := map[string]interface{}{eventbus.CtxPushMsg: eventbus.CtxPushMsgToStatusBar}
 	mergeResult, trafficStat, err := repo.SyncDownload(syncContext)
 	elapsed := time.Since(start)
@@ -1185,6 +1180,7 @@ func syncRepoDownload() (err error) {
 	autoSyncErrCount = 0
 	BootSyncSucc = 0
 
+	calcPetalDiff(beforeSyncPetals, mergeResult)
 	processSyncMergeResult(false, true, mergeResult, trafficStat, "d", elapsed)
 	return
 }
@@ -1293,6 +1289,7 @@ func bootSyncRepo() (err error) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
+		defer logging.Recover()
 
 		start := time.Now()
 		_, _, indexErr := indexRepoBeforeCloudSync(repo)
@@ -1318,6 +1315,7 @@ func bootSyncRepo() (err error) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
+		defer logging.Recover()
 
 		start := time.Now()
 		syncContext := map[string]interface{}{eventbus.CtxPushMsg: eventbus.CtxPushMsgToStatusBar}
@@ -1448,6 +1446,8 @@ func syncRepo(exit, byHand bool) (dataChanged bool, err error) {
 		return
 	}
 
+	beforeSyncPetals := getPetals()
+
 	syncContext := map[string]interface{}{eventbus.CtxPushMsg: eventbus.CtxPushMsgToStatusBar}
 	mergeResult, trafficStat, err := repo.Sync(syncContext)
 	elapsed := time.Since(start)
@@ -1485,6 +1485,7 @@ func syncRepo(exit, byHand bool) (dataChanged bool, err error) {
 	Conf.Save()
 	autoSyncErrCount = 0
 
+	calcPetalDiff(beforeSyncPetals, mergeResult)
 	processSyncMergeResult(exit, byHand, mergeResult, trafficStat, "a", elapsed)
 
 	if !exit {
@@ -1496,6 +1497,30 @@ func syncRepo(exit, byHand bool) (dataChanged bool, err error) {
 		}()
 	}
 	return
+}
+
+func calcPetalDiff(beforeSyncPetals []*Petal, mergeResult *dejavu.MergeResult) {
+	var upsertPetals, removePetals []string
+	afterSyncPetals := getPetals()
+	for _, afterSyncPetal := range afterSyncPetals {
+		if beforeSyncPetal := getPetalByName(afterSyncPetal.Name, beforeSyncPetals); nil != beforeSyncPetal {
+			a, _ := gulu.JSON.MarshalJSON(afterSyncPetal)
+			b, _ := gulu.JSON.MarshalJSON(beforeSyncPetal)
+			if !bytes.Equal(a, b) {
+				upsertPetals = append(upsertPetals, afterSyncPetal.Name)
+			}
+		} else {
+			upsertPetals = append(upsertPetals, afterSyncPetal.Name)
+		}
+	}
+	for _, beforeSyncPetal := range beforeSyncPetals {
+		if nil == getPetalByName(beforeSyncPetal.Name, afterSyncPetals) {
+			removePetals = append(removePetals, beforeSyncPetal.Name)
+		}
+	}
+
+	mergeResult.UpsertPetals = gulu.Str.RemoveDuplicatedElem(upsertPetals)
+	mergeResult.RemovePetals = gulu.Str.RemoveDuplicatedElem(removePetals)
 }
 
 func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, trafficStat *dejavu.TrafficStat, mode string, elapsed time.Duration) {
@@ -1533,8 +1558,13 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 				tree.Box = boxID
 				tree.Path = strings.TrimPrefix(file.Path, "/"+boxID)
 
+				previousPath := tree.Path
 				resetTree(tree, "Conflicted", true)
 				createTreeTx(tree)
+				box := Conf.Box(boxID)
+				if nil != box {
+					box.addSort(previousPath, tree.ID)
+				}
 			}
 
 			needReloadFiletree = true
@@ -1564,7 +1594,8 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 	var upsertTrees int
 	// 可能需要重新加载部分功能
 	var needReloadFlashcard, needReloadOcrTexts, needReloadPlugin bool
-	upsertPluginSet := hashset.New()
+	upsertCodePluginSet := hashset.New() // 插件代码变更 data/plugins/
+	upsertDataPluginSet := hashset.New() // 插件存储数据变更 data/storage/petal/
 	needUnindexBoxes, needIndexBoxes := map[string]bool{}, map[string]bool{}
 	for _, file := range mergeResult.Upserts {
 		upserts = append(upserts, file.Path)
@@ -1587,7 +1618,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 			needReloadPlugin = true
 			if parts := strings.Split(file.Path, "/"); 3 < len(parts) {
 				if pluginName := parts[3]; "petals.json" != pluginName {
-					upsertPluginSet.Add(pluginName)
+					upsertDataPluginSet.Add(pluginName)
 				}
 			}
 		}
@@ -1595,7 +1626,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 		if strings.HasPrefix(file.Path, "/plugins/") {
 			if parts := strings.Split(file.Path, "/"); 2 < len(parts) {
 				needReloadPlugin = true
-				upsertPluginSet.Add(parts[2])
+				upsertCodePluginSet.Add(parts[2])
 			}
 		}
 
@@ -1604,7 +1635,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 		}
 	}
 
-	removeWidgetDirSet, removePluginSet := hashset.New(), hashset.New()
+	removeWidgetDirSet, unloadPluginSet, uninstallPluginSet := hashset.New(), hashset.New(), hashset.New()
 	for _, file := range mergeResult.Removes {
 		removes = append(removes, file.Path)
 		if strings.HasPrefix(file.Path, "/storage/riff/") {
@@ -1625,7 +1656,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 			needReloadPlugin = true
 			if parts := strings.Split(file.Path, "/"); 3 < len(parts) {
 				if pluginName := parts[3]; "petals.json" != pluginName {
-					removePluginSet.Add(pluginName)
+					upsertDataPluginSet.Add(pluginName)
 				}
 			}
 		}
@@ -1633,7 +1664,8 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 		if strings.HasPrefix(file.Path, "/plugins/") {
 			if parts := strings.Split(file.Path, "/"); 2 < len(parts) {
 				needReloadPlugin = true
-				removePluginSet.Add(parts[2])
+				// 删除插件目录：卸载
+				uninstallPluginSet.Add(parts[2])
 			}
 		}
 
@@ -1642,6 +1674,16 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 				removeWidgetDirSet.Add(parts[2])
 			}
 		}
+	}
+
+	for _, upsertPetal := range mergeResult.UpsertPetals {
+		needReloadPlugin = true
+		upsertCodePluginSet.Add(upsertPetal)
+	}
+	for _, removePetal := range mergeResult.RemovePetals {
+		needReloadPlugin = true
+		// Petal 中删除插件：卸载
+		uninstallPluginSet.Add(removePetal)
 	}
 
 	if needReloadFlashcard {
@@ -1653,7 +1695,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 	}
 
 	if needReloadPlugin {
-		pushReloadPlugin(upsertPluginSet, removePluginSet)
+		PushReloadPlugin(upsertCodePluginSet, upsertDataPluginSet, unloadPluginSet, uninstallPluginSet, "")
 	}
 
 	for _, widgetDir := range removeWidgetDirSet.Values() {
@@ -1692,7 +1734,7 @@ func processSyncMergeResult(exit, byHand bool, mergeResult *dejavu.MergeResult, 
 	upsertRootIDs, removeRootIDs := incReindex(upserts, removes)
 	needReloadFiletree = !needReloadUI && (needReloadFiletree || 0 < len(upsertRootIDs) || 0 < len(removeRootIDs))
 	if needReloadFiletree {
-		util.PushReloadFiletree()
+		ReloadFiletree()
 	}
 
 	go func() {
@@ -1845,6 +1887,8 @@ func newRepository() (ret *dejavu.Repo, err error) {
 		webdavClient.SetTimeout(time.Duration(cloudConf.WebDAV.Timeout) * time.Second)
 		webdavClient.SetTransport(httpclient.NewTransport(cloudConf.WebDAV.SkipTlsVerify))
 		cloudRepo = cloud.NewWebDAV(&cloud.BaseCloud{Conf: cloudConf}, webdavClient)
+	case conf.ProviderLocal:
+		cloudRepo = cloud.NewLocal(&cloud.BaseCloud{Conf: cloudConf})
 	default:
 		err = fmt.Errorf("unknown cloud provider [%d]", Conf.Sync.Provider)
 		return
@@ -2129,6 +2173,12 @@ func buildCloudConf() (ret *cloud.Conf, err error) {
 			Timeout:        Conf.Sync.WebDAV.Timeout,
 			ConcurrentReqs: Conf.Sync.WebDAV.ConcurrentReqs,
 		}
+	case conf.ProviderLocal:
+		ret.Local = &cloud.ConfLocal{
+			Endpoint:       Conf.Sync.Local.Endpoint,
+			Timeout:        Conf.Sync.Local.Timeout,
+			ConcurrentReqs: Conf.Sync.Local.ConcurrentReqs,
+		}
 	default:
 		err = fmt.Errorf("invalid provider [%d]", Conf.Sync.Provider)
 		return
@@ -2212,20 +2262,4 @@ func getCloudSpace() (stat *cloud.Stat, err error) {
 		return
 	}
 	return
-}
-
-func pushReloadPlugin(upsertPluginSet, removePluginNameSet *hashset.Set) {
-	upsertPlugins, removePlugins := []string{}, []string{}
-	for _, n := range upsertPluginSet.Values() {
-		upsertPlugins = append(upsertPlugins, n.(string))
-	}
-	for _, n := range removePluginNameSet.Values() {
-		removePlugins = append(removePlugins, n.(string))
-	}
-
-	logging.LogInfof("reload plugins [upserts=%v, removes=%v]", upsertPlugins, removePlugins)
-	util.BroadcastByType("main", "reloadPlugin", 0, "", map[string]interface{}{
-		"upsertPlugins": upsertPlugins,
-		"removePlugins": removePlugins,
-	})
 }

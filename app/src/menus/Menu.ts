@@ -24,7 +24,10 @@ export class Menu {
                     if (lastShowElements.length > 0) {
                         lastShowElements[lastShowElements.length - 1].classList.remove("b3-menu__item--show");
                     } else {
-                        this.remove();
+                        this.element.style.transform = "";
+                        setTimeout(() => {
+                            this.remove();
+                        }, Constants.TIMEOUT_DBLCLICK);
                     }
                     return;
                 }
@@ -39,7 +42,7 @@ export class Menu {
             }
             const subMenuElement = itemElement.querySelector(".b3-menu__submenu") as HTMLElement;
             this.element.querySelectorAll(".b3-menu__item--show").forEach((item) => {
-                if (!item.contains(itemElement) && !item.isSameNode(itemElement) && !itemElement.contains(item)) {
+                if (!item.contains(itemElement) && item !== itemElement && !itemElement.contains(item)) {
                     item.classList.remove("b3-menu__item--show");
                 }
             });
@@ -78,27 +81,36 @@ export class Menu {
 
     private preventDefault(event: KeyboardEvent) {
         if (!hasClosestByClassName(event.target as Element, "b3-menu") &&
+            !hasClosestByClassName(event.target as Element, "tooltip") &&
             // 移动端底部键盘菜单
             !hasClosestByClassName(event.target as Element, "keyboard__bar")) {
             event.preventDefault();
         }
     }
 
-    public addSeparator(index?: number) {
-        return this.addItem({type: "separator", index});
-    }
-
     public addItem(option: IMenu) {
         const menuItem = new MenuItem(option);
-        this.append(menuItem.element, option.index);
-        return menuItem.element;
+        if (menuItem) {
+            this.append(menuItem.element, option.index);
+            return menuItem.element;
+        }
     }
 
     public removeScrollEvent() {
         window.removeEventListener(isMobile() ? "touchmove" : this.wheelEvent, this.preventDefault, false);
     }
 
-    public remove() {
+    public remove(isKeyEvent = false) {
+        if (isKeyEvent) {
+            const subElements = window.siyuan.menus.menu.element.querySelectorAll(".b3-menu__item--show");
+            if (subElements.length > 0) {
+                const subElement = subElements[subElements.length - 1];
+                subElement.classList.remove("b3-menu__item--show");
+                subElement.classList.add("b3-menu__item--current");
+                subElement.querySelector(".b3-menu__item--current")?.classList.remove("b3-menu__item--current");
+                return;
+            }
+        }
         if (window.siyuan.menus.menu.removeCB) {
             window.siyuan.menus.menu.removeCB();
             window.siyuan.menus.menu.removeCB = undefined;
@@ -111,7 +123,7 @@ export class Menu {
         this.element.classList.remove("b3-menu--list", "b3-menu--fullscreen");
         this.element.removeAttribute("style");  // zIndex
         this.element.removeAttribute("data-name");    // 标识再次点击不消失
-        this.element.removeAttribute("data-from");    // 标识是否在浮窗内打开
+        this.element.removeAttribute("data-from");    // 标识菜单入口
         this.data = undefined;    // 移除数据
     }
 
@@ -154,7 +166,7 @@ export class Menu {
                 this.element.style.transform = "translateY(-50vh)";
                 this.element.style.height = "50vh";
             } else {
-                this.element.style.transform = "translateY(-100vh)";
+                this.element.style.transform = "translateY(-100%)";
             }
         });
         this.element.lastElementChild.scrollTop = 0;
@@ -227,7 +239,7 @@ export class MenuItem {
                 html = `<svg class="b3-menu__icon ${options.iconClass || ""}" style="${options.icon === "iconClose" ? "height:10px;" : ""}"><use xlink:href="#${options.icon || ""}"></use></svg>${html}`;
             }
             if (options.accelerator) {
-                html += `<span class="b3-menu__accelerator">${updateHotkeyTip(options.accelerator)}</span>`;
+                html += `<span class="b3-menu__accelerator b3-menu__accelerator--hotkey">${updateHotkeyTip(options.accelerator)}</span>`;
             }
             if (options.action) {
                 html += `<svg class="b3-menu__action${options.action === "iconCloseRound" ? " b3-menu__action--close" : ""}"><use xlink:href="#${options.action}"></use></svg>`;
@@ -249,7 +261,7 @@ export class MenuItem {
             submenuElement.classList.add("b3-menu__submenu");
             submenuElement.innerHTML = '<div class="b3-menu__items"></div>';
             options.submenu.forEach((item) => {
-                submenuElement.firstElementChild.append(new MenuItem(item).element);
+                submenuElement.firstElementChild.append(new MenuItem(item)?.element || "");
             });
             this.element.insertAdjacentHTML("beforeend", '<svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>');
             this.element.append(submenuElement);
@@ -311,7 +323,13 @@ export const bindMenuKeydown = (event: KeyboardEvent) => {
             }
         }
         if (actionMenuElement) {
-            actionMenuElement.classList.add("b3-menu__item--current");
+            if (actionMenuElement.classList.contains("b3-menu__item")) {
+                actionMenuElement.classList.add("b3-menu__item--current");
+            }
+            const inputElement = actionMenuElement.querySelector(":scope > .b3-text-field") as HTMLInputElement;
+            if (inputElement) {
+                inputElement.focus();
+            }
             actionMenuElement.classList.remove("b3-menu__item--show");
             const parentRect = actionMenuElement.parentElement.getBoundingClientRect();
             const actionMenuRect = actionMenuElement.getBoundingClientRect();
@@ -355,6 +373,17 @@ export const bindMenuKeydown = (event: KeyboardEvent) => {
         if (!currentElement) {
             return false;
         } else {
+            const subMenuElement = currentElement.querySelector(".b3-menu__submenu") as HTMLElement;
+            if (subMenuElement) {
+                currentElement.classList.remove("b3-menu__item--current");
+                currentElement.classList.add("b3-menu__item--show");
+                const actionMenuElement = getActionMenu(subMenuElement.firstElementChild.firstElementChild, true);
+                if (actionMenuElement) {
+                    actionMenuElement.classList.add("b3-menu__item--current");
+                }
+                window.siyuan.menus.menu.showSubMenu(subMenuElement);
+                return true;
+            }
             const textElement = currentElement.querySelector(".b3-text-field") as HTMLInputElement;
             const checkElement = currentElement.querySelector(".b3-switch") as HTMLInputElement;
             if (textElement) {
@@ -381,11 +410,11 @@ export class subMenu {
         this.menus = [];
     }
 
-    addSeparator(index?: number) {
+    addSeparator(index?: number, id?: string) {
         if (typeof index === "number") {
-            this.menus.splice(index, 0, {type: "separator"});
+            this.menus.splice(index, 0, {type: "separator", id});
         } else {
-            this.menus.push({type: "separator"});
+            this.menus.push({type: "separator", id});
         }
     }
 
