@@ -209,18 +209,20 @@ index 0000000..fecf173
 +    }
 +};
 diff --git a/app/src/boot/onGetConfig.ts b/app/src/boot/onGetConfig.ts
-index 09b0748..cd16d2c 100644
+index a1f6713..7f51a30 100644
 --- a/app/src/boot/onGetConfig.ts
 +++ b/app/src/boot/onGetConfig.ts
-@@ -23,7 +23,6 @@ import {initStatus} from "../layout/status";
+@@ -23,9 +23,8 @@ import {initStatus} from "../layout/status";
  import {showMessage} from "../dialog/message";
  import {replaceLocalPath} from "../editor/rename";
  import {initBar} from "../layout/topBar";
+ import {openSetting} from "../config";
+ import {mountHelp} from "../util/mount";
 -import {openChangelog} from "./openChangelog";
  import type {App} from "../index";
  import {initWindowEvent} from "./globalEvent/event";
  import {sendGlobalShortcut} from "./globalEvent/keydown";
-@@ -70,7 +69,6 @@ export const onGetConfig = (isStart: boolean, app: App) => {
+@@ -73,7 +72,6 @@ export const onGetConfig = (isStart: boolean, app: App) => {
                      /// #if !BROWSER
                      sendGlobalShortcut(app);
                      /// #endif
@@ -229,10 +231,10 @@ index 09b0748..cd16d2c 100644
                      resetLayout();
                  }
 diff --git a/app/src/index.ts b/app/src/index.ts
-index 2492119..f2cdab4 100644
+index 2da6535..b9229ee 100644
 --- a/app/src/index.ts
 +++ b/app/src/index.ts
-@@ -54,6 +54,8 @@ import {setTitle} from "./util/processTitle";
+@@ -56,6 +56,8 @@ import {setTitle} from "./util/processTitle";
  import {ensureUILayout} from "./util/ensureUILayout";
  import {applyEntryVisibility} from "./config/entryVisibility/runtime";
  import {removeBlockPanelEditors} from "./block/panelRemoval";
@@ -241,7 +243,7 @@ index 2492119..f2cdab4 100644
  
  export class App {
      public plugins: import("./plugin").Plugin[] = [];
-@@ -293,6 +295,8 @@ export class App {
+@@ -309,6 +311,8 @@ export class App {
                          await ensureOnboarding();
                          await setNoteBook();
                          await onGetConfig(response.data.start, this);
@@ -251,18 +253,20 @@ index 2492119..f2cdab4 100644
                          setTitle("", true);
                          initMessage();
 diff --git a/app/src/mobile/index.ts b/app/src/mobile/index.ts
-index ccb004c..5c237ae 100644
+index 2039da2..3cb3332 100644
 --- a/app/src/mobile/index.ts
 +++ b/app/src/mobile/index.ts
-@@ -55,6 +55,7 @@ import {initTouchDragBridge} from "../util/touchDragBridge";
+@@ -58,8 +58,9 @@ import {initTouchDragBridge} from "../util/touchDragBridge";
  import {appearanceConfigApi} from "../config/tabs/appearanceRuntime";
  import {openByMobile} from "../editor/openLink";
  import {initHarmonyTextSelectionMenu} from "../util/harmonyTextSelectionMenu";
+ import {updateMobileTopBarLayout} from "./util/mobileTopBar";
+ import {showMobileBars} from "./util/mobileBars";
 +import {openFirstLaunchNotice} from "../boot/firstLaunchNotice";
  
  class App {
      public plugins: import("../plugin").Plugin[] = [];
-@@ -206,6 +207,7 @@ class App {
+@@ -213,6 +214,7 @@ class App {
                              try {
                                  await initFramework(this, confResponse.data.start);
                                  initRightMenu(this);
@@ -271,10 +275,10 @@ index ccb004c..5c237ae 100644
                                  window.siyuan.isReady = true;
                                  mainWs.flushMainMessages();
 diff --git a/kernel/api/router.go b/kernel/api/router.go
-index e94f77f..f129e14 100644
+index ad9c686..26a1c7d 100644
 --- a/kernel/api/router.go
 +++ b/kernel/api/router.go
-@@ -89,6 +89,8 @@ func ServeAPI(ginServer *gin.Engine) {
+@@ -90,6 +90,8 @@ func ServeAPI(ginServer *gin.Engine) {
  	ginServer.Handle("POST", "/api/system/checkUpdate", model.CheckAuth, model.CheckAdminRole, checkUpdate)
  	ginServer.Handle("POST", "/api/system/exportLog", model.CheckAuth, model.CheckAdminRole, exportLog)
  	ginServer.Handle("POST", "/api/system/getChangelog", model.CheckAuth, getChangelog)
@@ -284,10 +288,10 @@ index e94f77f..f129e14 100644
  	ginServer.Handle("POST", "/api/system/exportConf", model.CheckAuth, model.CheckAdminRole, exportConf)
  	ginServer.Handle("POST", "/api/system/importConf", model.CheckAuth, model.CheckAdminRole, model.CheckReadonly, importConf)
 diff --git a/kernel/api/system.go b/kernel/api/system.go
-index 93f5876..d8ca99c 100644
+index ed9c9cd..9c010e0 100644
 --- a/kernel/api/system.go
 +++ b/kernel/api/system.go
-@@ -165,6 +165,25 @@ func getChangelog(c *gin.Context) {
+@@ -166,6 +166,25 @@ func getChangelog(c *gin.Context) {
  	ret.Data = data
  }
  

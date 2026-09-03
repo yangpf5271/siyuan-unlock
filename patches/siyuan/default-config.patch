@@ -1,5 +1,5 @@
 diff --git forkSrcPrefix/kernel/conf/sync.go forkDstPrefix/kernel/conf/sync.go
-index 488cb9e5701adc964635376373202516656b1f9a..4e2a457fe7ff2dec817c2e0ae9de610d1412cbd3 100644
+index b076c5e7ea71d154591320d7313c81549fcb5804..662b300d433c1dde19e63815b09faaded29c08bc 100644
 --- forkSrcPrefix/kernel/conf/sync.go
 +++ forkDstPrefix/kernel/conf/sync.go
 @@ -38,8 +38,8 @@ func NewSync() *Sync {
@@ -15,7 +15,7 @@ index 488cb9e5701adc964635376373202516656b1f9a..4e2a457fe7ff2dec817c2e0ae9de610d
  	}
 
 diff --git forkSrcPrefix/kernel/conf/account.go forkDstPrefix/kernel/conf/account.go
-index 5e3b51fb8f9d2944a2cacef66cdc3bc9bd365c5a..d4f4e00dea010730b557f7c122b624fb015b1021 100644
+index c4590e22e5883934ece21538099022b3bfc054a3..133208f71bae33243001149bea13c169ea40e78d 100644
 --- forkSrcPrefix/kernel/conf/account.go
 +++ forkDstPrefix/kernel/conf/account.go
 @@ -23,7 +23,7 @@ type Account struct {
@@ -29,10 +29,10 @@ index 5e3b51fb8f9d2944a2cacef66cdc3bc9bd365c5a..d4f4e00dea010730b557f7c122b624fb
  	}
  }
 diff --git forkSrcPrefix/kernel/conf/appearance.go forkDstPrefix/kernel/conf/appearance.go
-index ebd1002acf907e4afb3524fe5adcf672a850646b..1df2f4761587468cadf8f6d43573836790473f22 100644
+index 1bc316a22d6ed34020d5c7149a3c4fa8109302c0..fd9f81a7f02da9acbe821924d10862dc81a56127 100644
 --- forkSrcPrefix/kernel/conf/appearance.go
 +++ forkDstPrefix/kernel/conf/appearance.go
-@@ -48,8 +48,8 @@ func NewAppearance() *Appearance {
+@@ -50,7 +50,7 @@ func NewAppearance() *Appearance {
  		Icon:                "litheness",
  		CodeBlockThemeLight: "github",
  		CodeBlockThemeDark:  "base16/dracula",
@@ -42,4 +42,3 @@ index ebd1002acf907e4afb3524fe5adcf672a850646b..1df2f4761587468cadf8f6d435738367
 +		CloseButtonBehavior: 1,
  		HideToolbar:         true,
  		HideStatusBar:       false,
- 		StatusBar:           &util.StatusBar{},
